@@ -90,8 +90,9 @@ sequenceDiagram
   Sc->>A: stop the agent's processes, read /work/repo as a tar stream
   Sc->>Sc: compare with pristine repo/ on host<br/>drop protected changes, run integrity checks
   Sc->>S: write non-protected changed files
+  Sc->>S: run visible tests (no hidden test in the container yet, D40)
   Sc->>S: copy hidden_tests/ in
-  Sc->>S: run visible tests, each bug test alone, regression suite (5 min)
+  Sc->>S: run each bug test alone, then the regression suite (5 min in all)
   S-->>Sc: exit codes and counts
   Sc->>Sc: base reward, cheat flags, reward, success
   Sc-->>I: score + metadata (flags, counts, limit hit)

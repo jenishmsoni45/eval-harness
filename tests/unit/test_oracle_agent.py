@@ -11,11 +11,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from inspect_ai.event import ModelEvent, ToolEvent
+from inspect_ai.log import EvalSample
 from inspect_ai.tool import ToolDef, bash, text_editor
 
 from harness.agents.oracle import script
 from harness.agents.patches import Edit, Hunk, apply_hunks, parse_patch, plan_edits
-from harness.tasks import load_task
+from harness.tasks import load_task, task_ids
+from scripts.validate_tasks import patch_stats
 
 if TYPE_CHECKING:
     from tests.conftest import OracleRun
@@ -99,8 +101,9 @@ def test_apply_hunks_uses_line_numbers_and_checks_each_hunk() -> None:
         apply_hunks(content, [Hunk("b\n", "B\n", 1)])
 
 
-def test_the_oracle_edits_for_risk_001_equal_git_apply(tmp_path: Path) -> None:
-    task = load_task("risk-001")
+@pytest.mark.parametrize("task_id", task_ids())
+def test_the_oracle_edits_equal_git_apply(task_id: str, tmp_path: Path) -> None:
+    task = load_task(task_id)
     patch = task.solution_patch.read_text()
     shutil.copytree(task.repo_dir, tmp_path / "repo")
     subprocess.run(["git", "apply", str(task.solution_patch)], cwd=tmp_path / "repo", check=True)
@@ -122,12 +125,13 @@ def test_the_oracle_follows_the_scripted_trajectory() -> None:
     assert editor == ["view", "str_replace"]
 
 
-def test_every_scripted_call_matches_the_real_tools_parameters() -> None:
+@pytest.mark.parametrize("task_id", task_ids())
+def test_every_scripted_call_matches_the_real_tools_parameters(task_id: str) -> None:
     schemas = {
         name: ToolDef(tool).parameters
         for name, tool in [("bash", bash()), ("text_editor", text_editor())]
     }
-    for call in (c for s in script("risk-001") for c in s.message.tool_calls or []):
+    for call in (c for s in script(task_id) for c in s.message.tool_calls or []):
         if call.function == "submit":
             assert set(call.arguments) == {"answer"}
             continue
@@ -136,48 +140,70 @@ def test_every_scripted_call_matches_the_real_tools_parameters() -> None:
         assert set(params.required) <= set(call.arguments), call
 
 
+def samples_by_task(run: OracleRun) -> dict[str, EvalSample]:
+    assert run.log.samples is not None
+    return {str(sample.id): sample for sample in run.log.samples}
+
+
 @pytest.mark.docker
-def test_the_oracle_scores_base_1_on_risk_001(oracle_run: OracleRun) -> None:
+def test_the_oracle_scores_base_1_on_every_task(oracle_run: OracleRun) -> None:
+    """phases.md P1-3 and P2-6: one attempt per task, each with base 1, logged as mockllm."""
     log = oracle_run.log
     assert log.status == "success", log.error
     assert log.eval.model.startswith("mockllm/")
-    assert log.samples is not None
-    assert len(log.samples) == 1
-    sample = log.samples[0]
-    assert sample.scores is not None
-    [score] = sample.scores.values()
-    assert score.value == 1.0
-    assert score.metadata is not None
-    assert score.metadata["base"] == 1.0
-    assert score.metadata["regression_passed"] is True
-    assert score.metadata["changed_files"] == ["risk/features/compute.py"]
+    samples = samples_by_task(oracle_run)
+    assert sorted(samples) == task_ids()
+    for task_id, sample in samples.items():
+        assert sample.scores is not None
+        [score] = sample.scores.values()
+        assert score.value == 1.0, (task_id, score.explanation)
+        assert score.metadata is not None
+        assert score.metadata["base"] == 1.0
+        assert score.metadata["regression_passed"] is True
+        assert all(score.metadata["bug_tests"].values())
+        fixed = list(patch_stats(load_task(task_id).solution_patch).files)
+        assert score.metadata["changed_files"] == fixed
 
 
 @pytest.mark.docker
 def test_the_oracle_log_shows_bash_and_text_editor_calls(oracle_run: OracleRun) -> None:
-    assert oracle_run.log.samples is not None
-    sample = oracle_run.log.samples[0]
-    tools = [e.function for e in sample.events if isinstance(e, ToolEvent)]
-    assert "bash" in tools
-    assert "text_editor" in tools
-    assert all(e.error is None for e in sample.events if isinstance(e, ToolEvent))
-    # One tool call per turn (D27): every model output asks for exactly one.
-    outputs = [e.output for e in sample.events if isinstance(e, ModelEvent)]
-    assert [len(o.message.tool_calls or []) for o in outputs] == [1] * len(tools)
+    for sample in samples_by_task(oracle_run).values():
+        tools = [e.function for e in sample.events if isinstance(e, ToolEvent)]
+        assert "bash" in tools
+        assert "text_editor" in tools
+        assert all(e.error is None for e in sample.events if isinstance(e, ToolEvent))
+        # One tool call per turn (D27): every model output asks for exactly one.
+        outputs = [e.output for e in sample.events if isinstance(e, ModelEvent)]
+        assert [len(o.message.tool_calls or []) for o in outputs] == [1] * len(tools)
+
+
+# What each runner prints when its tests passed, and what it prints for a failure. The visible
+# tests of medium and hard tasks pass on the shipped bug; an easy task's reproduction test fails.
+ALL_PASSED = {
+    "python": r"\b\d+ passed\b",
+    "go": r"(?m)^ok\s+\S+/internal/scheduler\b",
+    "rust": r"test result: ok\. \d+ passed",
+}
+FAILURE = {"python": "failed", "go": "FAIL", "rust": "FAILED"}
 
 
 @pytest.mark.docker
 def test_the_visible_tests_run_in_the_agents_shell(oracle_run: OracleRun) -> None:
-    """The preamble's test command works in the agent's (login) shell: the reproduction test
-    fails before the fix and every visible test passes after it."""
-    assert oracle_run.log.samples is not None
-    runs = [
-        str(e.result)
-        for e in oracle_run.log.samples[0].events
-        if isinstance(e, ToolEvent) and e.function == "bash"
-    ]
-    assert len(runs) == 2
-    before, after = runs
-    assert re.search(r"\b1 failed, \d+ passed\b", before), before
-    assert re.search(r"\b\d+ passed\b", after), after
-    assert "failed" not in after
+    """The preamble's test command works in the agent's (login) shell, offline, for every
+    language: on risk-001 the reproduction test fails before the fix, and on every task every
+    visible test passes after it."""
+    for task_id, sample in samples_by_task(oracle_run).items():
+        runs = [
+            str(e.result)
+            for e in sample.events
+            if isinstance(e, ToolEvent) and e.function == "bash"
+        ]
+        assert len(runs) == 2, task_id
+        before, after = runs
+        task = load_task(task_id)
+        assert re.search(ALL_PASSED[task.language], after), (task_id, after)
+        assert FAILURE[task.language] not in after, (task_id, after)
+        if task.difficulty == "easy":
+            assert re.search(r"\b1 failed, \d+ passed\b", before), before
+        else:
+            assert re.search(ALL_PASSED[task.language], before), (task_id, before)

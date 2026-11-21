@@ -1,5 +1,5 @@
-"""Shared fixtures: the Docker engine, the risk-001 image, one oracle run, and the container
-cleanup check (phases.md P1-9)."""
+"""Shared fixtures: the Docker engine, one oracle run over the bank, and the container cleanup
+check (phases.md P1-9)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import pytest
 from inspect_ai.log import EvalLog
 
 from harness.containers import leftover_containers, remove_containers
+from harness.tasks import task_ids
 
 
 def docker_available() -> bool:
@@ -114,8 +115,9 @@ class OracleRun:
 
 @pytest.fixture(scope="session")
 def oracle_run(docker_engine: None, tmp_path_factory: pytest.TempPathFactory) -> OracleRun:
-    """One oracle attempt on risk-001, shared by the tests that inspect it. tiktoken is made to
-    raise for the whole run, so the run passing proves no tokenizer file was fetched (D31)."""
+    """One oracle attempt on every task in the bank (phases.md P2-6), shared by the tests that
+    inspect it. tiktoken is made to raise for the whole run, so the run passing proves no
+    tokenizer file was fetched (D31)."""
     import tiktoken
 
     from harness.agents.oracle import oracle_model
@@ -130,5 +132,5 @@ def oracle_run(docker_engine: None, tmp_path_factory: pytest.TempPathFactory) ->
     log_dir = tmp_path_factory.mktemp("oracle-logs")
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(tiktoken, "get_encoding", no_tokenizer)
-        log = run_eval(oracle_model(), task_ids="risk-001", log_dir=str(log_dir))
+        log = run_eval(oracle_model(), task_ids=task_ids(), log_dir=str(log_dir))
     return OracleRun(log, calls, frozenset(sys.modules), log_dir)

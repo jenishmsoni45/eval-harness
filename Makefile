@@ -3,7 +3,8 @@
 # inspect-evalh-* remains.
 
 UV := uv run --frozen
-# Extra arguments for the validator, e.g. VALIDATE_ARGS="--changed-since origin/main" in CI.
+# Extra arguments for the validator, e.g. VALIDATE_ARGS="--changed-since origin/main" to validate
+# only the tasks a branch changed, or a list of task ids.
 VALIDATE_ARGS ?=
 
 .PHONY: sync lint test audit validate power

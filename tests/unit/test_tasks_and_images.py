@@ -27,13 +27,15 @@ def test_a_task_id_must_match_its_directory(tmp_path: Path) -> None:
         load_task("risk-002", bank=tmp_path)
 
 
-def test_hidden_material_carries_the_canary_and_the_repo_does_not() -> None:
-    task = load_task("risk-001")
+@pytest.mark.parametrize("task_id", task_ids())
+def test_hidden_material_carries_the_canary_and_the_repo_does_not(task_id: str) -> None:
+    task = load_task(task_id)
     marker = canary()
     assert re.fullmatch(r"EVALH-CANARY-[0-9a-f-]{36}", marker)
     for data in read_tree(task.hidden_tests_dir).values():
         assert marker.encode() in data
-    assert marker in task.solution_patch.read_text()
+    for patch in task.patches.values():
+        assert marker in patch.read_text()
     assert marker in (task.path / "task.yaml").read_text()
     assert not any(marker.encode() in data for data in read_tree(task.repo_dir).values())
 
@@ -42,7 +44,8 @@ def test_image_tags_are_content_hashes(tmp_path: Path) -> None:
     task = load_task("risk-001")
     tag = task_image_tag(task)
     assert re.fullmatch(r"evalh-task-risk-001:[0-9a-f]{16}", tag)
-    assert re.fullmatch(r"evalh-base-python:[0-9a-f]{16}", base_image_tag("python"))
+    for language in ("python", "go", "rust"):
+        assert re.fullmatch(rf"evalh-base-{language}:[0-9a-f]{{16}}", base_image_tag(language))
     assert task_image_tag(task) == tag
 
     shutil.copytree(task.path, tmp_path / "risk-001")
