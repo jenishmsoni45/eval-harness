@@ -363,6 +363,33 @@ Every question asked during planning and building, the options considered, the a
 - **Recorded:** 2026-11-20, Phase 1 (D8).
 - **Change to `design.md`:** `make power` (`scripts/power_estimate.py`) wrote the power and coverage table between the markers in §7.7. No other text in `design.md` changed. The table shows the D6 power target and the D30 coverage band are met at 20 tasks × 6 attempts, so the run size stands. `test_power_estimate.py` reruns the simulation and fails if the committed table differs from the script's output.
 
+### D39. Nothing that is a problem for the Mac
+
+- **Asked:** 2026-11-20, Phase 1, by the owner after reviewing what the phase fetched: nothing problematic for the Mac, especially external downloads and long-running Docker sessions.
+- **Rule:**
+  - **Downloads.** Only these, all pinned:
+    - Python packages from `uv.lock`, through uv;
+    - official Docker images, by digest;
+    - packages installed inside an image while it builds, from a hash-locked file;
+    - `make audit`'s vulnerability lookup on PyPI;
+    - read-only `gh` calls to this repository.
+
+    Nothing else is ever fetched: no file a library downloads at run time (tokenizers, model weights, datasets, helper binaries), no `curl` or `wget`, no installers. Once the images are built, every eval, test and validation works with no internet. A new need to download anything is a stop-and-ask, never done silently.
+  - **Docker.** Nothing keeps running.
+    - Every container is removed when its command or attempt ends.
+    - Containers this repo starts use `docker run --rm` and never detach. The only detached containers are Inspect's per-sample compose projects, which Inspect removes, with their volumes, when the sample ends.
+    - No restart policies, no background services, no volumes left behind.
+    - At most three attempts run at once, each container capped at 1 CPU and 2 GB (D21).
+    - Only `evalh-*` and `inspect-evalh-*` resources are created or touched; other projects' containers never are.
+  - **Processes.** No server, watcher or loop is left running after a command; any wait has a time bound and ends with its command.
+  - **The Mac itself.** Nothing is installed on it (`CLAUDE.md` hard limits); built images are named `evalh-*`, so they can be listed and removed without touching anything else.
+- **Enforced by:**
+  - a session-wide guard in `tests/conftest.py` that fails the test run if anything in it opens a connection to, or looks up, a host outside localhost;
+  - the `tiktoken` guard (D31);
+  - `tests/unit/test_host_safety.py`, which checks that every `docker run` in the code uses `--rm` and never detaches, and that no compose service has a restart policy or a volume;
+  - the container leak checks (P1-9).
+- **Docs:** added as the "Host safety" row of the non-functional requirements in `requirements.md`, with the owner's approval.
+
 ## Open questions
 
 None recorded yet.
