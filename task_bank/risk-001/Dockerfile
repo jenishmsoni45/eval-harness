@@ -5,13 +5,13 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-# Test dependencies from the snapshot's hash-locked requirements, so tests run offline.
+# Test dependencies from the snapshot's hash-locked requirements, so tests run offline. The base
+# image puts /opt/venv/bin on PATH, for login shells too.
 COPY --chown=root:root requirements.txt /opt/requirements.txt
 RUN python -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: \
       --requirement /opt/requirements.txt \
  && rm /opt/requirements.txt
-ENV PATH=/opt/venv/bin:$PATH
 
 COPY --chown=agent:agent . /work/repo
 USER agent
