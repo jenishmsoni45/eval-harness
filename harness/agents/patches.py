@@ -3,8 +3,8 @@
 Scripted agents read a patch on the host (a test fixture standing in for a model's skill) and
 change the sandbox's repo only through their normal tools. Each changed file becomes one
 `str_replace` per hunk, replacing the hunk's old lines (context and removed) with its new lines
-(context and added). A hunk whose old text is not unique in the file falls back to replacing the
-whole file. A new file becomes one `create`.
+(context and added). If a hunk's old text is not unique in the file, the file is patched by the
+hunks' line numbers instead and replaced in one edit. A new file becomes one `create`.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ NO_NEWLINE = "\\ No newline at end of file"
 class Hunk:
     old: str
     new: str
+    old_start: int = 0  # the hunk header's first old line (for an empty old side, the line before)
 
 
 @dataclass
@@ -67,7 +68,7 @@ def parse_patch(text: str) -> list[FilePatch]:
     return files
 
 
-HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 
 
 def _parse_hunk(lines: list[str], i: int, target: FilePatch) -> int:
@@ -76,8 +77,9 @@ def _parse_hunk(lines: list[str], i: int, target: FilePatch) -> int:
     header = HUNK_HEADER.match(lines[i])
     if header is None:
         raise ValueError(f"malformed hunk header: {lines[i]!r}")
-    old_left = int(header.group(1) or "1")
-    new_left = int(header.group(2) or "1")
+    old_start = int(header.group(1))
+    old_left = int(header.group(2) or "1")
+    new_left = int(header.group(3) or "1")
     old: list[str] = []
     new: list[str] = []
     last_sides = ""
@@ -103,7 +105,7 @@ def _parse_hunk(lines: list[str], i: int, target: FilePatch) -> int:
             new_left -= 1
             last_sides = "on"
         i += 1
-    target.hunks.append(Hunk("".join(old), "".join(new)))
+    target.hunks.append(Hunk("".join(old), "".join(new), old_start))
     return i
 
 
@@ -126,23 +128,19 @@ def plan_edits(patch_text: str, repo: Path) -> list[Edit]:
         else:
             edits += file_edits
             continue
-        # A hunk's old text is ambiguous: replace the whole file in one edit instead.
+        # A hunk's old text is ambiguous: patch by line numbers and replace the whole file.
         original = (repo / fp.path).read_text()
-        edits.append(Edit(fp.path, original, apply_edits(original, fp.hunks)))
+        edits.append(Edit(fp.path, original, apply_hunks(original, fp.hunks)))
     return edits
 
 
-def apply_edits(content: str, hunks: list[Hunk]) -> str:
-    """Apply hunks in order by position, each after the previous one's end."""
-    out: list[str] = []
-    pos = 0
-    for hunk in hunks:
-        at = content.index(hunk.old, pos)
-        out.append(content[pos:at] + hunk.new)
-        pos = at + len(hunk.old)
-    out.append(content[pos:])
-    return "".join(out)
-
-
-def changed_paths(patch_text: str) -> list[str]:
-    return [fp.path for fp in parse_patch(patch_text)]
+def apply_hunks(content: str, hunks: list[Hunk]) -> str:
+    """Apply hunks at the old-side lines their headers name, checking each one matches."""
+    lines = content.splitlines(keepends=True)
+    for hunk in sorted(hunks, key=lambda h: h.old_start, reverse=True):
+        old_lines = hunk.old.splitlines(keepends=True)
+        start = hunk.old_start - 1 if old_lines else hunk.old_start
+        if "".join(lines[start : start + len(old_lines)]) != hunk.old:
+            raise ValueError(f"hunk at old line {hunk.old_start} does not match the file")
+        lines[start : start + len(old_lines)] = hunk.new.splitlines(keepends=True)
+    return "".join(lines)

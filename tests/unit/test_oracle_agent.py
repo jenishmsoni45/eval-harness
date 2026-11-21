@@ -13,7 +13,7 @@ from inspect_ai.event import ToolEvent
 from inspect_ai.model import ChatMessageAssistant
 
 from harness.agents.oracle import script
-from harness.agents.patches import Edit, Hunk, apply_edits, parse_patch, plan_edits
+from harness.agents.patches import Edit, Hunk, apply_hunks, parse_patch, plan_edits
 from harness.tasks import load_task
 
 if TYPE_CHECKING:
@@ -53,13 +53,14 @@ def test_a_patch_is_parsed_into_files_and_hunks() -> None:
         ("pkg/new.py", True, 1),
     ]
     assert files[0].hunks[0] == Hunk(
-        "def f(x):\n    return x < 1\n\n\n", "def f(x):\n    return x <= 1\n\n\n"
+        "def f(x):\n    return x < 1\n\n\n", "def f(x):\n    return x <= 1\n\n\n", 1
     )
     assert files[0].hunks[1] == Hunk(
         "def h(s):\n--- a line that starts like a file header\n    return s\n",
         "def h(s):\n++++ and its replacement\n    return s\n",
+        8,
     )
-    assert files[1].hunks[0] == Hunk("", "X = 1\nY = 2")  # no newline at the end
+    assert files[1].hunks[0] == Hunk("", "X = 1\nY = 2", 0)  # no newline at the end
 
 
 def test_edits_are_one_replace_per_hunk_and_a_create_per_new_file(tmp_path: Path) -> None:
@@ -82,16 +83,19 @@ def test_edits_are_one_replace_per_hunk_and_a_create_per_new_file(tmp_path: Path
     assert "++++ and its replacement" in content
 
 
-def test_an_ambiguous_hunk_falls_back_to_replacing_the_whole_file(tmp_path: Path) -> None:
+def test_an_ambiguous_hunk_is_applied_at_its_own_line(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("x = 1\ny = 2\nx = 1\n")
     patch = "--- a/a.py\n+++ b/a.py\n@@ -3 +3 @@\n-x = 1\n+x = 3\n"
-    assert plan_edits(patch, tmp_path) == [
-        Edit("a.py", "x = 1\ny = 2\nx = 1\n", "x = 3\ny = 2\nx = 1\n")
-    ]
+    expected = Edit("a.py", "x = 1\ny = 2\nx = 1\n", "x = 1\ny = 2\nx = 3\n")
+    assert plan_edits(patch, tmp_path) == [expected]
 
 
-def test_apply_edits_applies_hunks_in_order() -> None:
-    assert apply_edits("a b a b", [Hunk("a", "A"), Hunk("a", "C")]) == "A b C b"
+def test_apply_hunks_uses_line_numbers_and_checks_each_hunk() -> None:
+    content = "a\nb\na\nb\n"
+    assert apply_hunks(content, [Hunk("a\n", "A\n", 1), Hunk("a\n", "C\n", 3)]) == "A\nb\nC\nb\n"
+    assert apply_hunks(content, [Hunk("", "new\n", 2)]) == "a\nb\nnew\na\nb\n"
+    with pytest.raises(ValueError, match="does not match"):
+        apply_hunks(content, [Hunk("b\n", "B\n", 1)])
 
 
 def test_the_oracle_edits_for_risk_001_equal_git_apply(tmp_path: Path) -> None:
