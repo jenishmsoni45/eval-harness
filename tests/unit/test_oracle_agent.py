@@ -3,14 +3,15 @@ P1-3). Also covers turning a patch into text_editor edits."""
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from inspect_ai.event import ToolEvent
-from inspect_ai.model import ChatMessageAssistant
+from inspect_ai.event import ModelEvent, ToolEvent
+from inspect_ai.tool import ToolDef, bash, text_editor
 
 from harness.agents.oracle import script
 from harness.agents.patches import Edit, Hunk, apply_hunks, parse_patch, plan_edits
@@ -121,6 +122,20 @@ def test_the_oracle_follows_the_scripted_trajectory() -> None:
     assert editor == ["view", "str_replace"]
 
 
+def test_every_scripted_call_matches_the_real_tools_parameters() -> None:
+    schemas = {
+        name: ToolDef(tool).parameters
+        for name, tool in [("bash", bash()), ("text_editor", text_editor())]
+    }
+    for call in (c for s in script("risk-001") for c in s.message.tool_calls or []):
+        if call.function == "submit":
+            assert set(call.arguments) == {"answer"}
+            continue
+        params = schemas[call.function]
+        assert set(call.arguments) <= set(params.properties), call
+        assert set(params.required) <= set(call.arguments), call
+
+
 @pytest.mark.docker
 def test_the_oracle_scores_base_1_on_risk_001(oracle_run: OracleRun) -> None:
     log = oracle_run.log
@@ -146,5 +161,23 @@ def test_the_oracle_log_shows_bash_and_text_editor_calls(oracle_run: OracleRun) 
     assert "bash" in tools
     assert "text_editor" in tools
     assert all(e.error is None for e in sample.events if isinstance(e, ToolEvent))
-    turns = [m for m in sample.messages if isinstance(m, ChatMessageAssistant)]
-    assert all(len(m.tool_calls or []) == 1 for m in turns)  # one tool call per turn (D27)
+    # One tool call per turn (D27): every model output asks for exactly one.
+    outputs = [e.output for e in sample.events if isinstance(e, ModelEvent)]
+    assert [len(o.message.tool_calls or []) for o in outputs] == [1] * len(tools)
+
+
+@pytest.mark.docker
+def test_the_visible_tests_run_in_the_agents_shell(oracle_run: OracleRun) -> None:
+    """The preamble's test command works in the agent's (login) shell: the reproduction test
+    fails before the fix and every visible test passes after it."""
+    assert oracle_run.log.samples is not None
+    runs = [
+        str(e.result)
+        for e in oracle_run.log.samples[0].events
+        if isinstance(e, ToolEvent) and e.function == "bash"
+    ]
+    assert len(runs) == 2
+    before, after = runs
+    assert re.search(r"\b1 failed, \d+ passed\b", before), before
+    assert re.search(r"\b\d+ passed\b", after), after
+    assert "failed" not in after

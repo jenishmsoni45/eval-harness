@@ -73,7 +73,7 @@ def tool_call(model: str, tool: str, **arguments: Any) -> ModelOutput:
 
 
 def run_in_repo(model: str, command: Sequence[str]) -> ModelOutput:
-    return tool_call(model, "bash", cmd=f"cd {REPO_DIR} && {shlex.join(command)}")
+    return tool_call(model, "bash", command=f"cd {REPO_DIR} && {shlex.join(command)}")
 
 
 def submit(model: str, answer: str = "done") -> ModelOutput:

@@ -20,6 +20,7 @@ import pytest
 from inspect_ai import Task
 from inspect_ai import eval as inspect_eval
 from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.event import ToolEvent
 from inspect_ai.model import ChatMessageTool, ModelOutput
 from inspect_ai.solver import generate
 from inspect_ai.util._sandbox.docker.util import task_project_name
@@ -30,6 +31,12 @@ from harness.eval import TASK_NAME, run_eval
 from harness.sample_identity import record_sample_identity
 
 PROBE = "mockllm/probe"
+# Prints the number of IPv4 routes in the main table, then the state of every interface but lo.
+NETWORK_PROBE = (
+    "awk 'NR > 1' /proc/net/route | wc -l; "
+    'for i in /sys/class/net/*; do [ -d "$i" ] && [ "${i##*/}" != lo ] && cat "$i/operstate"; '
+    "done | sort -u"
+)
 MACHINE = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}
 
 
@@ -76,7 +83,7 @@ def test_text_editor_works_offline_and_no_container_remains(
             PROBE, "text_editor", command="str_replace", path=probe, old_str="alpha", new_str="beta"
         ),
         tool_call(PROBE, "text_editor", command="view", path=probe),
-        tool_call(PROBE, "bash", cmd=f"cat {probe}; ls /sys/class/net; uname -m"),
+        tool_call(PROBE, "bash", command=f"cat {probe}; uname -m; {NETWORK_PROBE}"),
         submit(PROBE),
     ]  # fmt: skip
 
@@ -89,11 +96,17 @@ def test_text_editor_works_offline_and_no_container_remains(
     assert log.status == "success", log.error
     assert log.samples is not None
     tools = [m for m in log.samples[0].messages if isinstance(m, ChatMessageTool)]
-    assert [m.function for m in tools] == ["text_editor"] * 3 + ["bash", "submit"]
-    assert [m.error for m in tools] == [None] * 5
+    # react() ends the loop on submit without a tool message for it.
+    assert [m.function for m in tools] == ["text_editor"] * 3 + ["bash"]
+    assert [m.error for m in tools] == [None] * 4
+    calls = [e.function for e in log.samples[0].events if isinstance(e, ToolEvent)]
+    assert calls == ["text_editor"] * 3 + ["bash", "submit"]
     assert "beta" in tools[2].text
-    # Only the loopback interface exists (network_mode: none), on the host's architecture.
-    assert tools[3].text.split() == ["beta", "lo", MACHINE[platform.machine()]]
+    # On the host's architecture, with no route and no interface up but loopback (network_mode:
+    # none). Phase 3's E2 probe tries real connections.
+    lines = tools[3].text.split()
+    assert lines[:3] == ["beta", MACHINE[platform.machine()], "0"]
+    assert set(lines[3:]) <= {"down"}
 
     # Mid-sample: one compose project, inspect-evalh-i<random>, with the agent and scorer.
     projects = {re.sub(r"-(default|scorer)-1$", "", name) for name in during}
