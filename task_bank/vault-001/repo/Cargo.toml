@@ -1,0 +1,28 @@
+[package]
+name = "vaultline"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+description = "An encrypted local vault that injects secrets into child processes and templates without writing plaintext to disk."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jenishmsoni45/vaultline"
+publish = false
+
+[lib]
+name = "vaultline"
+path = "src/lib.rs"
+
+[dependencies]
+aho-corasick = { version = "1", default-features = false, features = ["std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+secrecy = "0.10"
+zeroize = "1"
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+# Argon2id, ChaCha20 and SHA-256 are far slower without optimisation. Building
+# dependencies (never vaultline itself) optimised keeps the tamper tests and the
+# one fixture at the default parameters fast in `cargo test`.
+[profile.dev.package."*"]
+opt-level = 3
