@@ -93,6 +93,7 @@ Each acceptance criterion is testable; the phase that delivers it is in [`phases
 | Concurrency | 3 attempts at once, within Docker Desktop's cap | D20, D21 |
 | Sandbox isolation | `network_mode: none` on every service; non-root user; all capabilities dropped; `no-new-privileges`; no Docker socket; no host mounts | D21, D27 |
 | Cleanup | No `evalh-*` or `inspect-evalh-*` container remains after any command | D25, `CLAUDE.md` |
+| Host safety | Nothing is downloaded except pinned uv packages, digest-pinned official images, hash-locked installs inside an image while it builds, `make audit`'s lookup and read-only `gh` calls; once images are built, every run works with no internet; no container, process or volume outlives its command; nothing is installed on the Mac | D39, `CLAUDE.md` |
 | Validation | N = 5 runs per check; any flake rejects the task | D12 |
 | Retries | ≤ 2 retries per attempt with the same seed; > 5% excluded attempts makes a run invalid | D18 |
 | Statistical power | ≥ 80% power to separate the strong and mid agents at 20 tasks × 6 attempts, confirmed by `scripts/power_estimate.py` | D6, D8, D30 |

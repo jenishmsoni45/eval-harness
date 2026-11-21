@@ -7,3 +7,18 @@
 
 # OS
 .DS_Store
+
+# Python environment and tool caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Inspect logs from development runs (the full run's logs go to results/logs/, D19)
+logs/
+
+# Pull request body drafted before `gh pr create`
+pr-body.md

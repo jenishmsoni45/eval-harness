@@ -311,6 +311,85 @@ Every question asked during planning and building, the options considered, the a
 - **Why:** it meets the power target with a margin while keeping the simplest, most standard interval method. Over-coverage errs on the safe side. Option (c) needs a less standard correction that would itself have to be proven.
 - **Consequences:** 360 scripted attempts instead of 300, plus cheater attempts; `make estimate` must still show the run fits in 6 hours (D22). pass@k is reported for k = 1 … 6. Phase 1's power script must confirm both the power target and the new band.
 
+## Phase 1
+
+### D31. `mockllm` would download a tokenizer file
+
+- **Recorded:** 2026-11-20, Phase 1, from Inspect 0.3.287's source (read-only), while confirming D27.
+- **Fact:** when a `mockllm` output carries no token usage, Inspect estimates it with `tiktoken`. On first use, `tiktoken` downloads its `o200k_base` vocabulary from OpenAI's public storage. It is a tokenizer file, not a model, but it is still a download at run time, and CI would repeat it on every run. Conversation compaction would also count tokens, but `react()` leaves compaction off by default.
+- **Handling:** every scripted output goes through `harness/agents/scripted.py`, which sets zero usage when the policy gave none, so Inspect never reaches `tiktoken`. In tests, `tiktoken.get_encoding` is replaced by a function that fails, both for every test and for the shared oracle run, so a regression shows up as a failing test. Nothing was ever downloaded.
+- **Why no decision was needed:** the hard limits can be met with no change to the design; this entry records the fact and the guard against it.
+
+### D32. Python base image: the full official image, not slim
+
+- **Recorded:** 2026-11-20, Phase 1.
+- **Context:** the task spec says each base image adds `git`, `find`, `tar` and a non-root user to an official, multi-architecture, glibc-based image pinned by digest. On the slim image, `git` would come from `apt-get` with versions that are not pinned, since Debian removes old package versions from its mirrors.
+- **Choice:** `python:3.12-bookworm` (the full image), pinned by digest. It already contains `git`, `find`, `tar` and the coreutils Inspect's tool helper needs (D27), so the base Dockerfile only adds the `agent` user and the environment. The image is larger; it is pulled once and cached.
+
+### D33. How the sandbox gets each task's image
+
+- **Recorded:** 2026-11-20, Phase 1, from Inspect 0.3.287's source.
+- **Fact:** Inspect fills `${SAMPLE_METADATA_<KEY>}` in a compose file from each sample's metadata, and runs its per-task setup once for each distinct value.
+- **Choice:** `harness/sandbox/compose.yaml` is the one template, with `image: ${SAMPLE_METADATA_IMAGE}`; each sample's metadata carries its content-hashed task image tag. No per-task compose files are generated.
+
+### D34. Sandbox settings in Phase 1 and Phase 3
+
+- **Recorded:** 2026-11-20, Phase 1.
+- **Context:** P1-5 asks for "every D21 limit" on every compose service, and D21 includes the non-root user, dropped capabilities and `no-new-privileges`. Phase 3's scope also lists those settings.
+- **Choice:** the Phase 1 compose template writes out every setting in design §2, and `test_compose.py` checks them statically. Phase 3 adds the tests that show the settings work (E2–E4), and the turn, time and scoring limits.
+- **Fact found:** with `cap_drop: [ALL]`, root in the container cannot switch users. Inspect detects this and installs and runs its tool helper as the container's default user (`agent`), in a world-writable directory under `/var/tmp`. `text_editor` therefore runs with the agent's own permissions, which is no more than `bash` already has.
+
+### D35. Validation containers
+
+- **Recorded:** 2026-11-20, Phase 1.
+- **Choice:** each validation run is one `docker run --rm --interactive` with the same settings as the compose template (a test checks they match). The hidden tests and the patch arrive as a tar archive on standard input; inside, one POSIX shell script places them, applies the patch, runs each test command, and prints exit codes and the regression report. Nothing is mounted, nothing is detached, and a container is force-removed if its client is killed.
+- **Why:** a container that stays up between commands would need `docker run --detach`, which the project rules forbid. A shell script works in every base image, including the Go and Rust images of Phase 2, which have no Python.
+- **Shared code:** the validator and the scorer build their test commands and read the regression report through `harness/testrun.py`, so a task is judged the same way at validation and at scoring.
+
+### D36. A Python snapshot's lockfile
+
+- **Recorded:** 2026-11-20, Phase 1, while building `risk-001`.
+- **Choice:** a Python snapshot ships a trimmed `pyproject.toml` (its pytest settings and test dependencies, at the source project's versions) and a `requirements.txt` with hashes, exported by uv from a lock of those dependencies. The task image installs it with `pip --require-hashes --only-binary=:all:` into `/opt/venv`, owned by root, so tests run offline and the agent cannot change installed packages.
+- **Why:** pip can install from hashes without uv in the image. `pyproject.toml` is a protected path; `requirements.txt` is not, but changing it has no effect, because dependencies are installed when the image is built.
+
+### D37. Installing uv in CI
+
+- **Recorded:** 2026-11-20, Phase 1.
+- **Context:** the newest `astral-sh/setup-uv` release was published the same day. Looking up an older release was refused by the project's command guard, so that step was skipped, not retried (it is listed in the PR's follow-ups).
+- **Choice:** CI installs uv on the runner with `python -m pip install uv==0.13.6`, the version on the development Mac, after `actions/setup-python`. Both actions are pinned by commit SHA. Nothing is installed on the Mac.
+
+### D38. The power table in design §7.7
+
+- **Recorded:** 2026-11-20, Phase 1 (D8).
+- **Change to `design.md`:** `make power` (`scripts/power_estimate.py`) wrote the power and coverage table between the markers in §7.7. No other text in `design.md` changed. The table shows the D6 power target and the D30 coverage band are met at 20 tasks × 6 attempts, so the run size stands. `test_power_estimate.py` reruns the simulation and fails if the committed table differs from the script's output.
+
+### D39. Nothing that is a problem for the Mac
+
+- **Asked:** 2026-11-20, Phase 1, by the owner after reviewing what the phase fetched: nothing problematic for the Mac, especially external downloads and long-running Docker sessions.
+- **Rule:**
+  - **Downloads.** Only these, all pinned:
+    - Python packages from `uv.lock`, through uv;
+    - official Docker images, by digest;
+    - packages installed inside an image while it builds, from a hash-locked file;
+    - `make audit`'s vulnerability lookup on PyPI;
+    - read-only `gh` calls to this repository.
+
+    Nothing else is ever fetched: no file a library downloads at run time (tokenizers, model weights, datasets, helper binaries), no `curl` or `wget`, no installers. Once the images are built, every eval, test and validation works with no internet. A new need to download anything is a stop-and-ask, never done silently.
+  - **Docker.** Nothing keeps running.
+    - Every container is removed when its command or attempt ends.
+    - Containers this repo starts use `docker run --rm` and never detach. The only detached containers are Inspect's per-sample compose projects, which Inspect removes, with their volumes, when the sample ends.
+    - No restart policies, no background services, no volumes left behind.
+    - At most three attempts run at once, each container capped at 1 CPU and 2 GB (D21).
+    - Only `evalh-*` and `inspect-evalh-*` resources are created or touched; other projects' containers never are.
+  - **Processes.** No server, watcher or loop is left running after a command; any wait has a time bound and ends with its command.
+  - **The Mac itself.** Nothing is installed on it (`CLAUDE.md` hard limits); built images are named `evalh-*`, so they can be listed and removed without touching anything else.
+- **Enforced by:**
+  - a session-wide guard in `tests/conftest.py` that fails the test run if anything in it opens a connection to, or looks up, a host outside localhost;
+  - the `tiktoken` guard (D31);
+  - `tests/unit/test_host_safety.py`, which checks that every `docker run` in the code uses `--rm` and never detaches, and that no compose service has a restart policy or a volume;
+  - the container leak checks (P1-9).
+- **Docs:** added as the "Host safety" row of the non-functional requirements in `requirements.md`, with the owner's approval.
+
 ## Open questions
 
 None recorded yet.

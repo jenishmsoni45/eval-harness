@@ -1,0 +1,52 @@
+# The two services of one attempt (design.md 2, D10, D21, D27).
+#
+# Inspect fills ${SAMPLE_METADATA_IMAGE} from each sample's metadata and starts the services as
+# compose project inspect-evalh-i<random> (D25). Its --project-name overrides `name` below, which
+# applies only when this file is used directly. Every setting is written out for each service,
+# because a custom compose file replaces Inspect's generated one (D27); tests/unit/test_compose.py
+# checks them.
+name: evalh
+
+services:
+  # The agent's container. Inspect's bash and text_editor tools act only on this service.
+  default:
+    image: ${SAMPLE_METADATA_IMAGE}
+    x-local: true
+    pull_policy: never
+    init: true
+    command: ["sleep", "infinity"]
+    working_dir: /work/repo
+    user: agent
+    network_mode: none
+    cpus: 1
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      TZ: UTC
+      LANG: C.UTF-8
+      PYTHONHASHSEED: "0"
+
+  # The scoring container (D10). It idles until scoring: no tool targets it, and with no network
+  # and no shared volume the agent cannot reach it.
+  scorer:
+    image: ${SAMPLE_METADATA_IMAGE}
+    x-local: true
+    pull_policy: never
+    init: true
+    command: ["sleep", "infinity"]
+    working_dir: /work/repo
+    user: agent
+    network_mode: none
+    cpus: 1
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      TZ: UTC
+      LANG: C.UTF-8
+      PYTHONHASHSEED: "0"
