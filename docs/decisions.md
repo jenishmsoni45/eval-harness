@@ -424,6 +424,61 @@ Every question asked during planning and building, the options considered, the a
 - **Options:** (a) drop the separate step and validate once through `test_e1`; (b) keep both.
 - **Decision:** (a). Pull-request CI validates the changed tasks once, through `test_e1` in `make test`. `make validate` stays the local command, and the manual "validate all" workflow still validates every task.
 
+### D44. Go and Rust base images
+
+- **Recorded:** 2026-11-21, Phase 2.
+- **Choice:** `golang:1.27.3-bookworm` and `rust:1.86-bookworm`, each pinned by the digest of its multi-architecture index (amd64 and arm64). The versions are the ones the sources use at the snapshot commits: job-queue's `go.mod` says `go 1.27.3`, and vaultline's CI pins Rust 1.86. Both images are built on `buildpack-deps:bookworm`, which already has `git`, `find`, `tar` and the coreutils Inspect's tool helper needs, so, as with D32, nothing is installed with unpinned versions.
+- **Offline settings:** Go runs with `GOTOOLCHAIN=local` (never fetch a toolchain), `GOFLAGS=-mod=readonly` and `GOPROXY=off`; Rust with `CARGO_NET_OFFLINE=true`. Cargo's home, with the crate registry, belongs to the `agent` user, because cargo takes a lock file there even offline. As in the Python image, the tools are put on `PATH` for login shells through `/etc/profile.d`, because Inspect's `bash` tool runs `bash --login`.
+- **Downloads** (all on the D39 list): the two images, by digest; while a task image builds, Go modules from `go.sum` through proxy.golang.org and crates from `Cargo.lock` through crates.io, both checked against those files' hashes. A task image builds and tests with `--locked` (Rust) or `-mod=readonly` (Go), so it fails if the lock or module files would change.
+
+### D45. Source commits and snapshots
+
+- **Recorded:** 2026-11-21, Phase 2.
+- **`risk-001`:** re-pointed from risk-engine commit `e44e1f1`, which is only on the `readme-final-pass` branch, to `0b00ff8` on main; every file the snapshot copies is byte-identical at the two commits, so only `task.yaml` changed.
+- **`queue-001`:** job-queue's `internal/scheduler` at `6fcae04` (main). `go.mod` and `go.sum` are trimmed to the one module the package's tests use (`pgregory.net/rapid`).
+- **`vault-001`:** vaultline at `91eba8b` (main), trimmed to the `secret` and `inject::mask` modules: `lib.rs`, `inject/mod.rs` and `Cargo.toml` keep only what those need (no binary, benchmarks or test-support feature), and `Cargo.lock` is pruned to match (D41). The masker's `#[cfg(test)]` unit tests stay in `src/` (the task spec allows it), minus the one that catches the bug. Of the S7 tests, the library ones stay; the end-to-end ones need the binary and are dropped. The proptest regression files are not copied ("no persisted failures").
+- **Fact found while pruning the lock:** a weak feature reference (`dep?/feature`) keeps an optional dependency in `Cargo.lock` even when it is not built (`rand → rand_chacha`, `aho-corasick → memchr`). The first prune removed them and the `--locked` build caught it.
+
+### D46. Running Go and Rust tests
+
+- **Recorded:** 2026-11-21, Phase 2. Implemented in `harness/testrun.py`, which the validator and the scorer share.
+- **Go:** a bug test is `<package dir>:<TestName>`. The hidden tests share the package under test, so a Go task's regression command skips the bug tests with `-skip`. Passed tests are the `pass` events of tests and subtests in `go test -json`. A bug test run that reports "no tests to run" is a fail.
+- **Rust:** a bug test is `<hidden target>:<test name>`. Bug tests and hidden regression tests sit in separate targets (`hidden_1.rs`, `hidden_2.rs`), so the regression command lists its targets. Passed tests are the sum of the `test result:` lines. A bug test run with 0 passed is a fail.
+
+### D47. How the validator checks each rule
+
+- **Recorded:** 2026-11-21, Phase 2. Choices within the task spec's wording:
+  - **V2:** "the visible tests run" means the visible run on the shipped bug reports at least one passing test; its exit code cannot tell an easy task's expected failure from a broken run.
+  - **V3:** the image's object database holds exactly one commit object (reachable or not), `git ls-tree` of that commit equals the snapshot's files (mode, blob hash, path), and no other `.git` directory exists.
+  - **V4:** the hidden material looked for is the canary, each bug test's name, and every line a patch adds (at least 20 characters) that the shipped repo does not already contain. It is searched in the build context, `docker history --no-trunc`, and every file in a container of the image (all but `/proc`, `/sys` and `/dev`). That container runs as root with only the capability to read any file. The build context is also checked for copies of hidden files, patches and `task.yaml`.
+  - **V9:** changed lines are `git apply --numstat`'s added plus removed lines of `solution.patch`.
+  - **V10:** configuration files in the protected list are matched at any depth, which protects a nested copy too. Rust `#[cfg(test)]` items are compared by their source text before and after the patch. A `#[cfg(test)] mod name;` declaration protects the module's file.
+  - **V13:** the time measured is the whole test phase of design §3 step 6 (visible run, bug tests and regression suite), with the reference fix, in a 1-CPU container. This is stricter than the bug tests plus the regression suite alone.
+- **Code:** protected-path matching lives in `harness/integrity.py`, the module architecture.md gives the integrity checks; Phase 4 adds the scorer's use and the other checks there.
+
+### D48. Seeds of the hidden randomized tests
+
+- **Recorded:** 2026-11-21, Phase 2.
+- **`queue-001`:** the new property test draws from `math/rand/v2` PCG generators with fixed seeds.
+- **`vault-001`:** the moved proptests run with `RngSeed::Fixed(1)` and no failure persistence. Seed 1 is one under which the moved unit proptest, with its own number of cases, catches the bug; it does under some seeds and not others. Under seed 1 the large-alphabet proptest passes on the bug, so it is a hidden regression test (`hidden_2.rs`).
+- **Randomized tests left visible:** only those that cannot catch the bug. job-queue's rapid state test checks properties the bug keeps (no deficit is negative, only eligible shops are offered); vaultline's `no_secret_survives_in_the_output` looks only for whole secrets, and the leak is part of one; the held-bytes bound does not depend on the carried coverage. Repeated runs on the bug and on every patch agree.
+
+### D49. Wrong and partial patches
+
+- **Recorded:** 2026-11-21, Phase 2. Each passes the visible and regression tests; each partial patch passes some bug tests but not all (V7, V8):
+
+  | Task | Wrong patch (fails every bug test) | Partial patch |
+  |---|---|---|
+  | `risk-001` | special-cases the reported 1-hour window in `features_at` | fixes the edge inline in `features_at` but leaves `in_window` wrong |
+  | `queue-001` | makes the join loop agree with the leave loop, so a shop that can't claim leaves the round robin until it can | keeps the shop's deficit but still moves it to the back |
+  | `vault-001` | changes the other comparison (`end >= h`), which behaves exactly like the bug | over-masks: while a chunk is held whole, every held byte counts as covered, so nothing leaks but too much is masked |
+
+### D50. Steps the command guard blocked
+
+- **Recorded:** 2026-11-21, Phase 2. Not retried (`CLAUDE.md`).
+  - Committing in a scratch copy of a snapshot to produce a patch with `git diff`, because the commit set a placeholder author. The patches are written with Python's `difflib` instead; no commit is involved.
+  - An `rm` of a scratch directory by absolute path. A fresh temporary directory is used instead.
+
 ## Open questions
 
 None recorded yet.
