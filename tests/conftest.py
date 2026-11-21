@@ -3,6 +3,7 @@ cleanup check (phases.md P1-9)."""
 
 from __future__ import annotations
 
+import socket
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -29,6 +30,42 @@ def docker_engine() -> None:
     """Docker tests fail, never skip, when the engine is unreachable."""
     if not docker_available():
         pytest.fail("this test needs a running Docker engine (start Docker Desktop)")
+
+
+LOCAL_HOSTS = frozenset({None, "localhost", "127.0.0.1", "::1"})
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_internet() -> Iterator[None]:
+    """No test, and no session fixture, may reach the internet from this process (D39): any
+    library that tried to fetch something at run time fails the run. Docker is driven through its
+    CLI in child processes, over its local socket, so it is unaffected."""
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+    real_getaddrinfo = socket.getaddrinfo
+
+    def check(sock: socket.socket, address: Any) -> None:
+        if sock.family in (socket.AF_INET, socket.AF_INET6) and address[0] not in LOCAL_HOSTS:
+            raise AssertionError(f"a test tried to connect to {address}: no downloads (D39)")
+
+    def connect(sock: socket.socket, address: Any) -> None:
+        check(sock, address)
+        real_connect(sock, address)
+
+    def connect_ex(sock: socket.socket, address: Any) -> int:
+        check(sock, address)
+        return real_connect_ex(sock, address)
+
+    def getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if host not in LOCAL_HOSTS:
+            raise AssertionError(f"a test tried to resolve {host!r}: no downloads (D39)")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(socket.socket, "connect", connect)
+        patch.setattr(socket.socket, "connect_ex", connect_ex)
+        patch.setattr(socket, "getaddrinfo", getaddrinfo)
+        yield
 
 
 @pytest.fixture(autouse=True)
