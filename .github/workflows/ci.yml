@@ -1,5 +1,6 @@
-# Every pull request (D15): lint and type checks, the dependency audit, validation of the tasks
-# the pull request adds or changes, and the test suite, which runs the Docker tests on amd64.
+# Every pull request (D15): lint and type checks, the dependency audit, and the test suite, which
+# runs the Docker tests on amd64. The suite's E1 test validates the tasks the pull request adds or
+# changes, once (D43).
 name: ci
 
 on:
@@ -34,11 +35,9 @@ jobs:
         run: make lint
       - name: Audit locked dependencies
         run: make audit
-      - name: Validate changed tasks
+      - name: Tests, with validation of the changed tasks
         env:
-          BASE_REF: ${{ github.base_ref }}
-        run: make validate VALIDATE_ARGS="--changed-since origin/${BASE_REF}"
-      - name: Tests
+          EVALH_BASE_REF: origin/${{ github.base_ref }}
         run: make test
       - name: No containers left behind
         if: always()
