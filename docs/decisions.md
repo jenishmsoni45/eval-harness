@@ -390,6 +390,40 @@ Every question asked during planning and building, the options considered, the a
   - the container leak checks (P1-9).
 - **Docs:** added as the "Host safety" row of the non-functional requirements in `requirements.md`, with the owner's approval.
 
+## Phase 2
+
+### D40. Visible tests run before the hidden tests are copied in
+
+- **Asked:** 2026-11-21, Phase 2 batch 1.
+- **Context:** Go hidden tests must sit in the package under test (task spec), so once they are in the container, the visible command (`go test ./internal/scheduler`) runs them too, and `visible_pass` would report hidden results. design §3 copied the hidden tests in (step 5) before running the visible command (step 6).
+- **Options:** (a) run the visible command first, then copy the hidden tests in, for every language; (b) name hidden Go tests `TestHidden…` and add `-skip '^TestHidden'` to the visible command; (c) a build tag on hidden Go files, with `-tags` added to bug-test commands.
+- **Decision:** (a). In the validator now and in the scorer when it gains `visible_pass` (Phase 4): apply the changes, run the visible command, then copy `hidden_tests/` in and run the bug tests and the regression suite.
+- **Why:** (b) shows the agent, through the preamble's test command, that hidden tests exist, and renames the moved tests; (c) changes the task spec's fixed Go bug-test command.
+- **Change to `design.md`** (approved by the owner): §3 steps 5 and 6 reordered as above. `architecture.md`'s attempt sequence diagram is reordered to match.
+
+### D41. Pruning a trimmed Rust snapshot's `Cargo.lock`
+
+- **Asked:** 2026-11-21, Phase 2 batch 1.
+- **Context:** `vault-001` trims vaultline to the `secret` and `inject::mask` modules, so `Cargo.toml` loses most dependencies. A lock with unused packages makes cargo rewrite `Cargo.lock`, a protected path, during an honest agent's `cargo test`.
+- **Options:** (a) hand-prune the lock and verify it with `--locked` during the image build; (b) cargo `--offline` on the Mac on a scratch copy; (c) a throwaway networked container in which cargo prunes it.
+- **Decision:** (a). Packages no longer reachable from the trimmed manifest are removed by hand, with no version changed. The task image builds and tests with `--locked`, so a lock cargo would rewrite fails the build (V2).
+- **Why:** nothing extra is downloaded and nothing runs on the Mac (D39).
+
+### D42. The planted bugs of `queue-001` and `vault-001`
+
+- **Asked:** 2026-11-21, Phase 2 batch 1.
+- **Decision** (approved by the owner):
+  - **`queue-001`** (Go, medium, job-queue's `internal/scheduler`): in the DRR scheduler's `Update`, a `Runnable`/`Eligible` mix-up drops a shop that is runnable but not eligible (capped, out of tokens or throttled), so it loses its deficit and its place in the round robin. The symptom shows in later offers; the bug is in `Update`.
+  - **`vault-001`** (Rust, hard, one file with `hard_reason`, vaultline's `inject::mask`): a `<=` becomes `<` in the streaming masker, so the coverage carried into held-back bytes is lost when a whole chunk is held, and part of a secret leaks when two secrets overlap across a chunk boundary.
+- **Why:** both are one-token changes that the source projects' randomised tests do not reliably catch, so the visible tests pass deterministically on the bug, as medium and hard tasks require. The tests that do catch them move to the hidden set, with fixed seeds.
+
+### D43. Pull-request CI validates changed tasks once
+
+- **Asked:** 2026-11-21, Phase 2 batch 1.
+- **Context:** `tests/invariants/test_e1_validity.py` (design §13) runs the validator on the tasks a PR changes, inside `make test`. CI also had a separate "Validate changed tasks" step, so every changed task would be validated twice, which is costly for Rust on a private repo's Actions allowance (D15).
+- **Options:** (a) drop the separate step and validate once through `test_e1`; (b) keep both.
+- **Decision:** (a). Pull-request CI validates the changed tasks once, through `test_e1` in `make test`. `make validate` stays the local command, and the manual "validate all" workflow still validates every task.
+
 ## Open questions
 
 None recorded yet.

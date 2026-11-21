@@ -53,9 +53,10 @@ Limits per attempt: the agent phase ends at 30 turns (one tool call each, becaus
 2. **Read the agent's repo.** Stream `/work/repo` out of `default` as a tar archive, skipping the ignored paths (task spec). An archive over 64 MB stops scoring with base reward 0 and the `diff_rejected` flag.
 3. **Compare with the pristine snapshot** on the host (`task_bank/<id>/repo/`), file by file: added, modified and deleted regular files. Symlinks and special files are never scored and set `diff_rejected`.
 4. **Integrity checks** (section 4) on the changed files and the trajectory. Changes to protected paths are dropped. For Rust, a source file whose `#[cfg(test)]` items changed counts as a protected change, and the whole file is dropped.
-5. **Apply** the remaining changes to `/work/repo` in `scorer`, then copy `hidden_tests/` in at their destination paths.
+5. **Apply** the remaining changes to `/work/repo` in `scorer`.
 6. **Run tests** in `scorer`, all within the 5-minute scoring limit:
-   - the visible-test command from pristine visible tests → `visible_pass`;
+   - the visible-test command from pristine visible tests → `visible_pass`, before any hidden test is in the container (D40);
+   - then copy `hidden_tests/` in at their destination paths;
    - each bug test on its own → pass or fail (nothing collected counts as fail);
    - the regression command → passes only if it exits 0 and the runner reports exactly `regression.count` tests run and passed.
 
