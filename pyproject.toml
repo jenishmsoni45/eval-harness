@@ -1,0 +1,81 @@
+[project]
+name = "evalh"
+version = "0.1.0"
+description = "Agent-evaluation harness on Inspect: planted-bug tasks, hidden-test grading, honest statistics"
+requires-python = "==3.12.*"
+# Direct dependencies are pinned exactly; uv.lock pins everything else with hashes.
+dependencies = [
+    "inspect-ai==0.3.287",
+    "numpy==2.5.4",
+    "pandas==3.1.1",
+    "pyyaml==6.0.3",
+    "scipy==1.18.1",
+]
+
+[dependency-groups]
+dev = [
+    "hypothesis==6.170.14",
+    "mypy==2.4.1",
+    "pip-audit==2.10.1",
+    "pytest==9.2.0",
+    "ruff==0.17.4",
+]
+
+[tool.uv]
+# harness/, scripts/ and tests/ are imported from the repo root; the project is never built.
+package = false
+# Resolve only releases at least two weeks old on the day this was set (2026-11-20).
+exclude-newer = "2026-11-06T00:00:00Z"
+# Wheels only: no package's build code runs at install.
+no-build = true
+# Use the Python 3.12 already on the machine or the CI runner.
+python-downloads = "never"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Task snapshots are copies of other projects' code, linted there, not here.
+extend-exclude = ["task_bank"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "A", "S", "BLE", "SIM", "PT", "RET", "RUF",
+    "PTH", "C4", "T20",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, and drive docker and git through subprocess with fixed argument lists.
+"tests/**" = ["S101", "S603", "S607"]
+# Command-line scripts report on standard output, and drive docker and git through subprocess
+# with fixed argument lists.
+"scripts/**" = ["T201", "S603", "S607"]
+# The harness drives docker and git through subprocess with fixed argument lists.
+"harness/**" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["harness", "scripts", "tests"]
+exclude = ["^task_bank/"]
+# tests/ and scripts/ have no __init__.py; module names start at the repo root.
+explicit_package_bases = true
+
+# PyYAML ships no type hints, and no stub package is a dependency; callers check every value.
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true
+
+# SciPy ships no type hints, and no stub package is a dependency; only scipy.special's expit and
+# logit are used, on numpy arrays.
+[[tool.mypy.overrides]]
+module = ["scipy", "scipy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+pythonpath = ["."]
+xfail_strict = true
+markers = [
+    "docker: needs a running Docker engine; builds evalh-* images and starts sandboxes",
+]
