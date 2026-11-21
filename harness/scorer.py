@@ -32,6 +32,7 @@ from harness.testrun import (
     REPO_DIR,
     base_reward,
     bug_test_command,
+    bug_test_passed,
     regression_passed,
     regression_run,
 )
@@ -112,14 +113,15 @@ async def copy_hidden_tests(box: SandboxEnvironment, task: Task) -> None:
         await box.write_file(f"{REPO_DIR}/{path}", data)
 
 
-async def run_passes(box: SandboxEnvironment, command: tuple[str, ...]) -> bool:
-    """Whether a test command exits 0. A command that hangs past its bound counts as failed:
-    that is the agent's outcome, not an infrastructure failure (design.md 3 step 6)."""
+async def run_bug_test(box: SandboxEnvironment, task: Task, test_id: str) -> bool:
+    """Whether one bug test, run on its own, passes. A command that hangs past its bound counts
+    as failed: that is the agent's outcome, not an infrastructure failure (design.md 3 step 6)."""
+    command = bug_test_command(task, test_id)
     try:
         result = await box.exec(list(command), cwd=REPO_DIR, timeout=COMMAND_TIMEOUT_S)
     except TimeoutError:
         return False
-    return result.returncode == 0
+    return bug_test_passed(task, result.returncode, result.stdout + result.stderr)
 
 
 async def run_regression(box: SandboxEnvironment, task: Task) -> bool:
@@ -128,10 +130,14 @@ async def run_regression(box: SandboxEnvironment, task: Task) -> bool:
         result = await box.exec(list(regression.command), cwd=REPO_DIR, timeout=COMMAND_TIMEOUT_S)
     except TimeoutError:
         return False
-    try:
-        report: str | None = await box.read_file(regression.report_path)
-    except FileNotFoundError:
-        report = None
+    report: str | None
+    if regression.report_path is None:  # the runner's own output is the report
+        report = result.stdout + result.stderr
+    else:
+        try:
+            report = await box.read_file(regression.report_path)
+        except FileNotFoundError:
+            report = None
     return regression_passed(task, result.returncode, report)
 
 
@@ -141,9 +147,7 @@ async def score_attempt(
     changes = diff_trees(read_tree(task.repo_dir), await read_repo(agent_box))
     await apply_changes(scorer_box, changes)
     await copy_hidden_tests(scorer_box, task)
-    bug_results = {
-        t: await run_passes(scorer_box, bug_test_command(task, t)) for t in task.bug_tests
-    }
+    bug_results = {t: await run_bug_test(scorer_box, task, t) for t in task.bug_tests}
     regression_ok = await run_regression(scorer_box, task)
     base = base_reward(list(bug_results.values()), regression_ok)
     return Score(
