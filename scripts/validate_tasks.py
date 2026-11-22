@@ -1,9 +1,8 @@
-"""Task validation: rules V1-V10, V12 and V13 of task-spec.md "Validation rules" (E1, D12).
-
-V11, the runner-detection check, arrives with the integrity checks in Phase 4. For each task:
+"""Task validation: rules V1-V13 of task-spec.md "Validation rules" (E1, D12). For each task:
 
 - on the host: V1 (schema, id, canary, the task's files), V12 (canary in hidden material),
-  V10 (protected paths), V9 (the reference fix's size), and V4 for the build context;
+  V10 (protected paths), V11 (no runner-detection flag on any patch), V9 (the reference fix's
+  size), and V4 for the build context;
 - the image: V2 (it builds from repo/ alone), V3 (one commit, no other .git) and V4 (no hidden
   material in `docker history` or anywhere in a container's filesystem);
 - RUNS fresh containers for each of the shipped bug (V5), the reference fix (V6), the wrong
@@ -40,7 +39,7 @@ from pathlib import Path
 from harness.attempt import SCORING_TIME_LIMIT_S
 from harness.containers import leftover_containers, remove_containers
 from harness.images import build_task_image
-from harness.integrity import is_protected, protected_changes
+from harness.integrity import is_protected, protected_changes, runner_detection
 from harness.tasks import (
     CANARY_FILE,
     REPO_ROOT,
@@ -368,6 +367,29 @@ def check_protected(task: Task) -> list[str]:
     return problems
 
 
+def check_runner_detection(task: Task) -> list[str]:
+    """V11: the runner-detection check sets no flag on any of the three patches, as the scorer
+    would run it on an attempt that made the patch's changes (D28: a false flag costs 1)."""
+    problems = []
+    pristine = read_tree(task.repo_dir)
+    for name, path in task.patches.items():
+        try:
+            changed = patched_files(task, path)
+        except subprocess.CalledProcessError:
+            continue  # V10 reports a patch that does not apply
+        scored = {
+            p: d
+            for p, d in changed.items()
+            if d is not None and p not in protected_changes(task, pristine, changed)
+        }
+        for finding in runner_detection(task, pristine, scored):
+            problems.append(
+                f"{name} sets runner_detection ({finding.rule}) at {finding.where}: "
+                f"{finding.evidence}"
+            )
+    return problems
+
+
 def check_difficulty_size(task: Task) -> list[str]:
     """V9, from the reference fix alone: its files and changed lines, and `hard_reason`."""
     stats = patch_stats(task.solution_patch)
@@ -539,8 +561,8 @@ def run_state(task: Task, image: str, label: str, runs: int, findings: Findings)
 
 
 def check_host(task_id: str, bank: Path = TASK_BANK) -> tuple[Task | None, Findings]:
-    """The rules checked on the host, without Docker: V1, V12, V10, V9 (the reference fix's size
-    and hard_reason) and V4 (the build context). Returns the task, or None if it cannot be
+    """The rules checked on the host, without Docker: V1, V12, V10, V11, V9 (the reference fix's
+    size and hard_reason) and V4 (the build context). Returns the task, or None if it cannot be
     loaded or is incomplete, and what was found."""
     findings = Findings()
     path = bank / task_id
@@ -557,6 +579,7 @@ def check_host(task_id: str, bank: Path = TASK_BANK) -> tuple[Task | None, Findi
         return None, findings
     findings.add("V12", check_canary(task))
     findings.add("V10", check_protected(task))
+    findings.add("V11", check_runner_detection(task))
     findings.add("V9", check_difficulty_size(task))
     findings.add("V4", check_build_context(task, leak_patterns(task)))
     return task, findings
