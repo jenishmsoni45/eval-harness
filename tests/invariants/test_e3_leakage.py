@@ -27,6 +27,7 @@ from harness.agents.snoop import COMMANDS, OUTPUT_BYTES, snoop_model
 from harness.eval import evalh, run_eval
 from harness.sample_identity import record_sample_identity
 from harness.tasks import Task, canary, load_task, read_tree
+from harness.testrun import AGENT_USER
 from scripts.validate_tasks import MIN_PATTERN_LENGTH, leak_patterns
 from tests.runs import bash_outputs, by_task, invariant_tasks, tool_events
 
@@ -94,7 +95,7 @@ def plant_decoy(files: dict[str, str]) -> Solver:
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         for path, text in files.items():
-            await sandbox().write_file(path, text)
+            await sandbox().write_file(path, text, user=AGENT_USER)
         return state
 
     return solve

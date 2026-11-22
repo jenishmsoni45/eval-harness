@@ -27,6 +27,7 @@ from inspect_ai.util import sandbox
 
 from harness.agents.probe import CHECKS, EXPECTED_FAILURES, PROBE_SCRIPT, parse, probe_model
 from harness.eval import COMPOSE_TEMPLATE, evalh, run_eval
+from harness.testrun import AGENT_USER
 from tests.runs import bash_outputs, one_task_per_language, record, samples
 
 NETWORK_KEYS = {"networks", "ports", "expose", "dns", "dns_search", "extra_hosts", "links"}
@@ -45,7 +46,7 @@ def test_every_compose_service_has_no_network() -> None:
 def probe_the_scoring_container() -> Scorer:
     async def score(state: TaskState, target: Target) -> Score:
         result = await sandbox("scorer").exec(
-            ["bash", "-c", PROBE_SCRIPT], timeout=300, timeout_retry=False
+            ["bash", "-c", PROBE_SCRIPT], user=AGENT_USER, timeout=300, timeout_retry=False
         )
         return Score(value=0, metadata={"output": result.stdout, "stderr": result.stderr})
 

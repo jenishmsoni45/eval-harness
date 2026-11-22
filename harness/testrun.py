@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from harness.tasks import Task
 
 REPO_DIR = "/work/repo"
+# The user every tool call and every scorer command runs as, in both containers of an attempt;
+# only the containers' init and keep-alive run as root (design.md 2, D60).
+AGENT_USER = "agent"
 # Where a Python run writes its JUnit report, inside the scoring or validation container.
 REPORT_PATH = "/tmp/evalh-{name}-report.xml"  # noqa: S108 (a fixed path in a container)
 

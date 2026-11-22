@@ -1,12 +1,15 @@
 """Every compose service has no network and every D21 limit (phases.md P1-5; design.md 2).
 
 A custom compose file replaces Inspect's generated one, including its `network_mode: none`, so
-each setting must be written out for each service (D27). The validator's plain `docker run` must
-apply the same settings.
+each setting must be written out for each service (D27). Each service's init and keep-alive run as
+root with only SETUID and SETGID, and the agent's tools run as `agent` (D60). The validator's plain
+`docker run` applies the same settings, except that its one script runs as `agent` with no
+capability at all: it has no keep-alive to protect and no tool helper to serve.
 """
 
 from __future__ import annotations
 
+import inspect
 import os
 import subprocess
 from typing import Any
@@ -14,7 +17,8 @@ from typing import Any
 import pytest
 import yaml
 
-from harness.eval import COMPOSE_TEMPLATE, evalh
+from harness.eval import COMPOSE_TEMPLATE, evalh, limited_agent
+from harness.testrun import AGENT_USER
 from scripts.validate_tasks import SANDBOX_FLAGS
 
 EXPECTED: dict[str, Any] = {
@@ -24,20 +28,21 @@ EXPECTED: dict[str, Any] = {
     "init": True,
     "command": ["sleep", "infinity"],
     "working_dir": "/work/repo",
-    "user": "agent",
+    "user": "root",
     "network_mode": "none",
     "cpus": 1,
     "mem_limit": "2g",
     "memswap_limit": "2g",
     "pids_limit": 256,
     "cap_drop": ["ALL"],
+    "cap_add": ["SETUID", "SETGID"],
     "security_opt": ["no-new-privileges:true"],
     "environment": {"TZ": "UTC", "LANG": "C.UTF-8", "PYTHONHASHSEED": "0"},
 }
 # Keys that could open a path out of the sandbox; none may appear.
 FORBIDDEN_KEYS = frozenset(
     {
-        "volumes", "ports", "expose", "networks", "privileged", "cap_add", "devices", "extra_hosts",
+        "volumes", "ports", "expose", "networks", "privileged", "devices", "extra_hosts",
         "dns", "ipc", "pid", "userns_mode", "env_file", "build", "links", "external_links",
         "container_name", "group_add", "sysctls", "volumes_from", "secrets", "configs",
     }
@@ -70,7 +75,7 @@ def test_the_validator_runs_with_the_same_settings() -> None:
     s = EXPECTED
     assert set(SANDBOX_FLAGS) == {
         f"--network={s['network_mode']}",
-        f"--user={s['user']}",
+        f"--user={AGENT_USER}",
         f"--cap-drop={s['cap_drop'][0]}",
         f"--security-opt={s['security_opt'][0]}",
         f"--pids-limit={s['pids_limit']}",
@@ -81,6 +86,24 @@ def test_the_validator_runs_with_the_same_settings() -> None:
         *(f"--env={k}={v}" for k, v in s["environment"].items()),
         f"--workdir={s['working_dir']}",
     }
+
+
+def test_only_the_two_capabilities_the_tool_helper_needs_are_added() -> None:
+    """D60: SETUID and SETGID let Inspect's text_editor helper, running as root, switch to `agent`.
+    Nothing else is added, and no-new-privileges stays."""
+    for service in services().values():
+        assert service["cap_drop"] == ["ALL"]
+        assert service["cap_add"] == ["SETUID", "SETGID"]
+        assert "no-new-privileges:true" in service["security_opt"]
+
+
+def test_the_agents_tools_run_as_the_agent_user() -> None:
+    """D60: the containers' default user is root (for the init and keep-alive only), so each tool
+    must name `agent`, or it would run as root."""
+    source = inspect.getsource(limited_agent)
+    assert "bash(user=AGENT_USER)" in source
+    assert "text_editor(user=AGENT_USER)" in source
+    assert AGENT_USER == "agent"
 
 
 def test_every_sample_uses_the_template(monkeypatch: pytest.MonkeyPatch) -> None:

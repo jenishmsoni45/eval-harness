@@ -5,6 +5,12 @@
 # applies only when this file is used directly. Every setting is written out for each service,
 # because a custom compose file replaces Inspect's generated one (D27); tests/unit/test_compose.py
 # checks them.
+#
+# Each service runs as root with every capability dropped but SETUID and SETGID, and only its init
+# and keep-alive run that way: every tool call and every scorer command runs as `agent`. So an
+# agent that kills all its own processes cannot stop its container, and Inspect's text_editor
+# helper can still switch to `agent` (D60). no-new-privileges keeps any agent process from gaining
+# a capability.
 name: evalh
 
 services:
@@ -16,13 +22,14 @@ services:
     init: true
     command: ["sleep", "infinity"]
     working_dir: /work/repo
-    user: agent
+    user: root
     network_mode: none
     cpus: 1
     mem_limit: 2g
     memswap_limit: 2g
     pids_limit: 256
     cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
     environment:
       TZ: UTC
@@ -38,13 +45,14 @@ services:
     init: true
     command: ["sleep", "infinity"]
     working_dir: /work/repo
-    user: agent
+    user: root
     network_mode: none
     cpus: 1
     mem_limit: 2g
     memswap_limit: 2g
     pids_limit: 256
     cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
     environment:
       TZ: UTC
