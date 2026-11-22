@@ -8,7 +8,11 @@ contents and every validation rule are checked by scripts/validate_tasks.py.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -262,3 +266,24 @@ def read_tree(root: Path) -> dict[str, bytes]:
 
 def canary() -> str:
     return CANARY_FILE.read_text().strip()
+
+
+def patched_files(task: Task, patch: Path) -> dict[str, bytes | None]:
+    """The files a patch changes in the task's snapshot, with their content after `git apply` on
+    the host (None if deleted). Raises CalledProcessError if the patch does not apply."""
+    with tempfile.TemporaryDirectory(prefix="evalh-patch-") as tmp:
+        work = Path(tmp) / "repo"
+        shutil.copytree(task.repo_dir, work)
+        subprocess.run(
+            ["git", "apply", str(patch.resolve())], cwd=work, check=True, capture_output=True
+        )
+        before, after = read_tree(task.repo_dir), read_tree(work)
+    changed: dict[str, bytes | None] = {p: d for p, d in after.items() if before.get(p) != d}
+    changed |= {p: None for p in before if p not in after}
+    return changed
+
+
+@cache
+def reference_changes(task: Task) -> dict[str, bytes | None]:
+    """What the reference fix changes (D66), computed once per task."""
+    return patched_files(task, task.solution_patch)

@@ -29,11 +29,9 @@ import base64
 import hashlib
 import io
 import shlex
-import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -51,6 +49,7 @@ from harness.tasks import (
     TaskSpecError,
     canary,
     load_task,
+    patched_files,
     read_tree,
     task_ids,
 )
@@ -349,20 +348,6 @@ def patch_stats(patch: Path) -> PatchStats:
         files.append(path)
         lines += int(added) + int(removed)
     return PatchStats(tuple(files), lines)
-
-
-def patched_files(task: Task, patch: Path) -> dict[str, bytes | None]:
-    """The files a patch changes, with their content after `git apply` (None if deleted)."""
-    with tempfile.TemporaryDirectory(prefix="evalh-patch-") as tmp:
-        work = Path(tmp) / "repo"
-        shutil.copytree(task.repo_dir, work)
-        subprocess.run(
-            ["git", "apply", str(patch.resolve())], cwd=work, check=True, capture_output=True
-        )
-        before, after = read_tree(task.repo_dir), read_tree(work)
-    changed: dict[str, bytes | None] = {p: d for p, d in after.items() if before.get(p) != d}
-    changed |= {p: None for p in before if p not in after}
-    return changed
 
 
 def check_protected(task: Task) -> list[str]:
