@@ -126,8 +126,7 @@ class Deadline:
     """The scoring limit, shared by every test command of one attempt."""
 
     def __init__(self, seconds: float) -> None:
-        self.start = time.monotonic()
-        self.end = self.start + seconds
+        self.end = time.monotonic() + seconds
         self.hit = False
 
     def timeout(self) -> int | None:
@@ -137,10 +136,6 @@ class Deadline:
             self.hit = True
             return None
         return left
-
-    @property
-    def elapsed(self) -> float:
-        return time.monotonic() - self.start
 
 
 async def run_test_command(
@@ -191,10 +186,11 @@ async def score_attempt(
     task: Task,
     scoring_limit_s: float = SCORING_TIME_LIMIT_S,
 ) -> Score:
+    start = time.monotonic()
     changes = diff_trees(read_tree(task.repo_dir), await read_repo(agent_box))
     await apply_changes(scorer_box, changes)
     await copy_hidden_tests(scorer_box, task)
-    deadline = Deadline(scoring_limit_s)
+    deadline = Deadline(scoring_limit_s)  # the test phase (design.md 3 step 6)
     bug_results = {t: await run_bug_test(scorer_box, task, t, deadline) for t in task.bug_tests}
     regression_ok = await run_regression(scorer_box, task, deadline)
     base = base_reward(list(bug_results.values()), regression_ok)
@@ -211,7 +207,7 @@ async def score_attempt(
             "regression_passed": regression_ok,
             "changed_files": changes.paths,
             "scoring_limit_hit": deadline.hit,
-            "scoring_seconds": round(deadline.elapsed, 3),
+            "scoring_seconds": round(time.monotonic() - start, 3),
         },
     )
 

@@ -41,6 +41,7 @@ from harness.agents.outcomes import (
 from harness.agents.patches import parse_patch, plan_edits
 from harness.agents.scripted import Turn, with_stable_ids
 from harness.tasks import load_task, task_ids
+from harness.testrun import REPO_DIR
 from scripts import power_estimate
 from tests.runs import base, by_task, one_task_per_language, record, tool_events
 
@@ -241,6 +242,21 @@ def test_giving_up_stops_after_viewing_and_submits_no_change(task_id: str) -> No
 def test_running_out_of_steps_views_files_and_never_submits(task_id: str) -> None:
     outputs = script_calls(task_id, Outcome.OUT_OF_STEPS, steps=45)
     assert calls(outputs) == [("bash", None)] + [("text_editor", "view")] * 44
+
+
+def test_running_out_of_steps_views_the_repo_when_a_fix_only_adds_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adds_a_file = "--- /dev/null\n+++ b/pkg/new.py\n@@ -0,0 +1 @@\n+X = 1\n"
+    monkeypatch.setattr(honest, "_patch", lambda task, outcome: adds_a_file)
+    for step in range(1, 5):
+        [call] = (
+            output_at("strong", "risk-001", Outcome.OUT_OF_STEPS, step).message.tool_calls or []
+        )
+        assert (call.function, call.arguments) == (
+            "text_editor",
+            {"command": "view", "path": REPO_DIR},
+        )
 
 
 PATCHES = ["solution.patch", "wrong.patch", "partial.patch"]

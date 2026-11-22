@@ -90,7 +90,11 @@ def output_at(name: str, task_id: str, outcome: Outcome, step: int) -> ModelOutp
     object it is given."""
     steps = script(name, task_id, outcome)
     if outcome is Outcome.OUT_OF_STEPS and step >= len(steps):
-        views = _views(model_id(name), _patch(load_task(task_id), outcome))
+        model = model_id(name)
+        # A fix that only adds files has nothing to view: look at the repo itself instead.
+        views = _views(model, _patch(load_task(task_id), outcome)) or [
+            tool_call(model, "text_editor", command="view", path=REPO_DIR)
+        ]
         return views[(step - len(steps)) % len(views)].model_copy(deep=True)
     return steps[min(step, len(steps) - 1)].model_copy(deep=True)
 
