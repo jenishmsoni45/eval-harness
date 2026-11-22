@@ -540,6 +540,32 @@ Every question asked during planning and building, the options considered, the a
 - **Decision:** (a). The probe prints every interface's flags, the interfaces holding IPv6 addresses and routes, the number of IPv4 routes and every non-loopback address (`hostname -I`, with its exit status, so a missing command cannot pass the check).
 - **Change to `design.md`** (approved by the owner): §1's E2 test text now reads "the loopback interface is the only one that is up, has an address or has a route".
 
+### D58. Snapshots of tasks 4–10
+
+- **Recorded:** 2026-11-21, Phase 3. Choices within the task spec's trimming rules (D2, D45):
+  - **Source commits:** risk-engine `0b00ff8`, job-queue `6fcae04` and vaultline `bf61fea`, each project's main branch.
+  - **Python test configuration:** risk-engine's `tests/conftest.py` registers the derandomized Hypothesis profile its tests rely on, but also imports Redis. `risk-002` to `risk-005` ship it trimmed to the profile, so visible and hidden property tests run the same examples every time. `risk-004` also ships `tests/helpers.py` trimmed to `ROOT`, the one name its tests import; the source file imports Kafka, Postgres and HTTP clients.
+  - **Python dependencies:** each `requirements.txt` is `risk-001`'s (pytest, Hypothesis and their dependencies, at the source's versions) plus numpy or PyYAML, with every hash copied from risk-engine's committed `uv.lock`. Nothing was resolved or fetched to write them.
+  - **`queue-002`:** the `admission` package needs only the standard library, so `go.mod` has no `require` and the image fetches nothing. **`queue-003`** shares `queue-001`'s trimmed `go.mod` and `go.sum` and starts from the pristine scheduler; all of its visible tests are the project's own.
+  - **`vault-002`:** `inject::reference` needs `vault::Name`, which lives in `vault/format.rs` beside the vault encoder, and the encoder needs the whole crypto stack. `format.rs` is trimmed to `Name`, `NameError` and `MAX_NAME_LEN` (its unit tests all test the encoder and go with it), and `vault/mod.rs` to the module and those re-exports. The crate then has no dependencies, and its `Cargo.lock` is `vault-001`'s with the crates only the masker and secret types used removed by hand (D41); the `--locked` image build accepted it.
+- **Moved tests:** an existing test moves to the hidden set only if it catches the bug. In `risk-002` the threshold's property tests stay visible: Hypothesis rarely draws 100 or more scores, below which the capacity is 0 and the bug cannot show, so the hidden set adds tests that use 100 or more.
+
+### D59. Wrong and partial patches of tasks 4–10
+
+- **Recorded:** 2026-11-21, Phase 3. Each passes the visible tests (wrong) or the regression tests (both), as V7 and V8 require; the number of bug tests each passes is in brackets:
+
+  | Task | Wrong patch | Partial patch |
+  |---|---|---|
+  | `risk-002` | a fast path for all-distinct scores, which fixes the report but leaves ties wrong (3 of 4) | when nothing fits under the strict comparison, holds the top score alone if it fits (1 of 4) |
+  | `risk-003` | moves the extra test day back to the threshold set inside `masks`, leaving `part_of` wrong (2 of 4) | fixes the test-day boundary but moves the threshold boundary up, leaving one threshold day (1 of 4) |
+  | `risk-004` | records the keys again but reports the 0-based line, one before the repeat (0 of 4) | records the keys but skips every mapping that uses a `<<` merge (3 of 4) |
+  | `risk-005` | the textbook per-position average precision, which ignores ties (1 of 4) | per-position average precision with fraud sorted last within each tie: order-free, but wrong when a tie mixes fraud and other transfers (3 of 4) |
+  | `queue-002` | rounds to the nearest second (0 of 3) | rounds up only remainders of at least a millisecond (2 of 3) |
+  | `queue-003` | ignores a late result for any shop whose turn is over, so the shop is never dropped (1 of 3) | moves the pointer back but also closes the open turn (2 of 3) |
+  | `vault-002` | skips leading spaces but not tabs before `#` (1 of 4) | skips an indented comment only when the line has no `=` (3 of 4) |
+
+  The counts were measured with one validation run of each patch.
+
 ## Open questions
 
 None recorded yet.
