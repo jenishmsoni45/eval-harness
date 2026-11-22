@@ -4,10 +4,14 @@ changes, reading the regression report, computing base and the reward of every f
 
 from __future__ import annotations
 
+import asyncio
 import io
 import tarfile
+from collections.abc import Coroutine
+from typing import Any, cast
 
 import pytest
+from inspect_ai.util import ExecResult, SandboxEnvironment
 
 from harness.integrity import (
     CHEAT_FLAGS,
@@ -20,6 +24,7 @@ from harness.integrity import (
 )
 from harness.scorer import (
     KILL_LOOP,
+    STOPPED,
     TAR_EXCLUDES,
     Changes,
     Outcome,
@@ -27,6 +32,8 @@ from harness.scorer import (
     diff_trees,
     is_task_flake,
     reward,
+    score_attempt,
+    stop_processes,
     tree_from_tar,
 )
 from harness.tasks import is_ignored, load_task, reference_changes
@@ -271,3 +278,86 @@ def test_the_kill_loop_uses_only_shell_built_ins() -> None:
     for word in ("ps", "pkill", "killall", "xargs", "awk", "sed", "grep", "sleep", "cat"):
         assert f"{word} " not in KILL_LOOP
     assert "kill -9" in KILL_LOOP
+
+
+# --- D61: when nothing can start in the agent's container ----------------------------------
+
+
+class FakeBox:
+    """A sandbox whose every exec returns the same result, as runc does while a fork bomb holds
+    every PID of the container."""
+
+    def __init__(self, stdout: str, returncode: int = 128) -> None:
+        self.result = ExecResult(returncode == 0, returncode, stdout, "")
+        self.calls = 0
+
+    async def exec(self, cmd: list[str], **kwargs: object) -> ExecResult[str]:
+        self.calls += 1
+        return self.result
+
+
+FULL = (
+    "OCI runtime exec failed: exec failed: unable to start container process: error executing "
+    "setns process: exit status 1; runc init error(s): nsexec-1[2254]: unable to spawn stage-2: "
+    "Resource temporarily unavailable"
+)
+
+
+def run[T](coroutine: Coroutine[Any, Any, T]) -> T:
+    return asyncio.run(coroutine)
+
+
+def test_stopping_reports_how_many_processes_were_killed() -> None:
+    box = FakeBox(f"{STOPPED} 7\n", returncode=0)
+    assert run(stop_processes(cast(SandboxEnvironment, box))) == 7
+
+
+PROC_READY = (
+    "OCI runtime exec failed: exec failed: unable to start container process: procReady not "
+    "received"
+)
+TIMEOUT_FORK = "/usr/bin/timeout: fork system call failed: Resource temporarily unavailable"
+
+
+@pytest.mark.parametrize(("output", "code"), [(FULL, 128), (PROC_READY, 128), (TIMEOUT_FORK, 125)])
+def test_stopping_gives_up_when_nothing_can_start(
+    monkeypatch: pytest.MonkeyPatch, output: str, code: int
+) -> None:
+    """Each way runc or the timeout wrapper reports a full process limit is retried, then given
+    up on at the end of the window."""
+    monkeypatch.setattr("harness.scorer.STOP_RETRY_PAUSE_S", 0.01)
+    box = FakeBox(output, returncode=code)
+    assert run(stop_processes(cast(SandboxEnvironment, box), window_s=0.1)) is None
+    assert box.calls > 1  # it kept trying
+
+
+def test_any_other_failure_to_stop_is_raised_for_a_retry() -> None:
+    box = FakeBox('service "default" is not running', returncode=1)
+    with pytest.raises(RuntimeError, match="could not stop"):
+        run(stop_processes(cast(SandboxEnvironment, box)))
+
+
+def test_an_attempt_whose_container_cannot_start_anything_scores_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing is read or scored; `processes` is the limit hit; the snooping check, which needs
+    no container, still runs."""
+    monkeypatch.setattr("harness.scorer.STOP_WINDOW_S", 0.05)
+    monkeypatch.setattr("harness.scorer.STOP_RETRY_PAUSE_S", 0.01)
+    agent, scorer_box = FakeBox(FULL), FakeBox("")
+    task = load_task("risk-001")
+    score = run(
+        score_attempt(
+            cast(SandboxEnvironment, agent),
+            cast(SandboxEnvironment, scorer_box),
+            task,
+            commands=["find / -name '*.patch'"],
+        )
+    )
+    assert score.metadata is not None
+    assert score.metadata["processes_limit_hit"] is True
+    assert score.metadata["base"] == 0
+    assert score.metadata["changed_files"] == []
+    assert score.metadata["flags"] == [SNOOPING]
+    assert score.value == -1
+    assert scorer_box.calls == 0  # the scoring container was never touched

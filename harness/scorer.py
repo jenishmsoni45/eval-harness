@@ -96,8 +96,11 @@ MAX_REPO_BYTES = 64 * 1024 * 1024
 # is full, and how long it waits between tries.
 STOP_WINDOW_S = 30.0
 STOP_RETRY_PAUSE_S = 0.5
-# What runc says when a container's process limit is full and nothing more can start.
-PROCESS_LIMIT_ERROR = "Resource temporarily unavailable"
+# What runc (or the timeout wrapper) says when a container's process limit is full and nothing
+# more can start: either EAGAIN, or runc's own child failing before the command starts
+# ("unable to start container process: procReady not received"). A container that has stopped
+# says something else, and is raised as Docker's error.
+PROCESS_LIMIT_ERRORS = ("Resource temporarily unavailable", "unable to start container process")
 # tar --exclude patterns for the ignored paths of task-spec.md, matched at any depth.
 TAR_EXCLUDES = tuple(
     f"--exclude={pattern}"
@@ -107,15 +110,15 @@ TAR_EXCLUDES = tuple(
 # wrapper), pass after pass, until a pass finds none. Built-ins only: under a fork bomb no new
 # process may be available. The root init and keep-alive refuse the signal and stay (D60, D61).
 KILL_LOOP = (
-    'self=$$; parent=$PPID; passes=0; killed=1; '
+    'self=$$; parent=$PPID; passes=0; killed=1; total=0; '
     'while [ "$killed" -gt 0 ] && [ "$passes" -lt 1000 ]; do killed=0; '
     'for p in /proc/[0-9]*; do pid=${p#/proc/}; '
     'case $pid in 1|"$self"|"$parent") continue;; esac; '
     'kill -9 "$pid" 2>/dev/null && killed=$((killed + 1)); done; '
-    "passes=$((passes + 1)); done"
+    "total=$((total + killed)); passes=$((passes + 1)); done"
 )  # fmt: skip
 STOPPED = "evalh-stopped"
-STOP_SCRIPT = f'{KILL_LOOP}; echo "{STOPPED} $passes"'
+STOP_SCRIPT = f'{KILL_LOOP}; echo "{STOPPED} $total"'
 # Runs one test command, then kills whatever it left running, and exits with its status.
 TEST_WRAPPER = f'"$@"; rc=$?; {KILL_LOOP}; exit $rc'
 ARCHIVED = "evalh-archive"
@@ -132,7 +135,8 @@ class ProcessLimitError(Exception):
 
 
 def hit_process_limit(result: ExecResult[str]) -> bool:
-    return not result.success and PROCESS_LIMIT_ERROR in result.stdout + result.stderr
+    output = result.stdout + result.stderr
+    return not result.success and any(sign in output for sign in PROCESS_LIMIT_ERRORS)
 
 
 # --- Reading the agent's repo --------------------------------------------------------------
@@ -226,21 +230,25 @@ def diff_trees(pristine: dict[str, bytes], current: dict[str, bytes]) -> Changes
 # --- Stopping processes --------------------------------------------------------------------
 
 
-async def stop_processes(box: SandboxEnvironment, window_s: float = STOP_WINDOW_S) -> bool:
-    """Kill every process the agent left running in a container (design.md 3 step 1). Returns
-    False if no command could start within `window_s` because the process limit is full (D61);
-    any other failure is Docker's, and is raised."""
-    end = time.monotonic() + window_s
+async def stop_processes(box: SandboxEnvironment, window_s: float | None = None) -> int | None:
+    """Kill every process the agent left running in a container (design.md 3 step 1); return
+    how many were killed. None if no command could start within `window_s` because the process
+    limit is full (D61); any other failure is Docker's, and is raised. `window_s` defaults to
+    STOP_WINDOW_S."""
+    end = time.monotonic() + (STOP_WINDOW_S if window_s is None else window_s)
     while True:
         result = await box.exec(
             ["sh", "-c", STOP_SCRIPT], user=AGENT_USER, timeout=COMMAND_TIMEOUT_S
         )
-        if STOPPED in result.stdout:
-            return True
+        words = next(
+            (line.split() for line in result.stdout.splitlines() if line.startswith(STOPPED)), None
+        )
+        if words is not None:
+            return int(words[1]) if len(words) == 2 and words[1].isdigit() else 0
         if not hit_process_limit(result):
             raise RuntimeError(f"could not stop the agent's processes: {result}")
         if time.monotonic() >= end:
-            return False
+            return None
         await asyncio.sleep(STOP_RETRY_PAUSE_S)
 
 
@@ -277,7 +285,7 @@ async def copy_hidden_tests(box: SandboxEnvironment, task: Task) -> None:
         try:
             await box.write_file(f"{REPO_DIR}/{path}", data, user=AGENT_USER)
         except RuntimeError as error:
-            if PROCESS_LIMIT_ERROR in str(error):
+            if any(sign in str(error) for sign in PROCESS_LIMIT_ERRORS):
                 raise ProcessLimitError from error
             raise
 
@@ -335,9 +343,8 @@ async def run_test_command(
         return None
     if hit_process_limit(result):
         phase.process_limit_hit = True
-        if not await stop_processes(
-            box, window_s=min(STOP_WINDOW_S, deadline.end - time.monotonic())
-        ):
+        window = min(STOP_WINDOW_S, deadline.end - time.monotonic())
+        if await stop_processes(box, window_s=window) is None:
             raise ProcessLimitError
         return None
     return result
@@ -414,6 +421,7 @@ class Outcome:
     dropped: list[str] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
     task_flake: bool = False
+    stopped: int | None = None  # processes the agent left running, killed before reading
     scoring_limit_hit: bool = False
     process_limit_hit: bool = False
 
@@ -445,6 +453,7 @@ class Outcome:
             "dropped_files": self.dropped,
             "rejected_files": self.rejected,
             "task_flake": self.task_flake,
+            "processes_stopped": self.stopped,
             "scoring_limit_hit": self.scoring_limit_hit,
             "processes_limit_hit": self.process_limit_hit,
             "scoring_seconds": round(seconds, 3),
@@ -463,9 +472,11 @@ async def score_attempt(
     the snooping check."""
     start = time.monotonic()
     out = Outcome(bug=dict.fromkeys(task.bug_tests, False), findings=snooping(commands))
-    if not await stop_processes(agent_box):
+    stopped = await stop_processes(agent_box)
+    if stopped is None:
         out.process_limit_hit = True  # D61: nothing could start; nothing is read
         return out.score(time.monotonic() - start)
+    out.stopped = stopped
     tree = await read_repo(agent_box)
     if isinstance(tree, int):
         out.findings.append(
