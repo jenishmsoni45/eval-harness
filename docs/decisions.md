@@ -566,6 +566,95 @@ Every question asked during planning and building, the options considered, the a
 
   The counts were measured with one validation run of each patch.
 
+## Phase 4
+
+### D60. An agent could stop its own container
+
+- **Asked:** 2026-11-22, Phase 4 batch 1 (a surprise mid-phase). Changes design §2 and D21's wording.
+- **Context:** each container's init and keep-alive (`sleep infinity`) ran as `agent`, the same user as the agent's commands. A scripted run showed that an agent running `kill -9 -1` kills the keep-alive. The container then exits, Inspect raises `SandboxUnavailableError`, and the attempt is retried as an infrastructure failure and finally excluded. Design §8 says an agent's own actions are never infrastructure failures, and for RL it would be a way out of a bad reward. After the fact it looks the same as E6's "container killed mid-attempt", so it must be prevented, not detected.
+- **Options:** (a) run init and the keep-alive as root, and every tool call and scorer command as `agent`; (b) `init: false`, with a bash loop as PID 1, which the kernel shields from signals sent inside its namespace; (c) leave it as a known limit.
+- **Decision:** (a).
+  - Each service runs as `root`, with every capability dropped except `SETUID` and `SETGID`. Only root processes hold those two capabilities: the init, the keep-alive and Inspect's tool-helper server. Inspect's `text_editor` helper needs them to switch to `agent`; without them it fails with "Permission denied switching user" (tested). `no-new-privileges` stays, so an `agent` process can never gain them.
+  - The agent's `bash` and `text_editor` run as `agent` (Inspect's `user="agent"`), and so does every scorer command in both containers, including `read_file` and `write_file`.
+  - A scripted run confirmed it: after the agent's `kill -9 -1`, the root keep-alive is still running, `text_editor` still works, and its files belong to `agent`.
+- **Why:** option (b) leaves the zombies of killed processes unreaped, holding PIDs against the 256 limit, which breaks recovery from a fork bomb (D61); a probe of it also hung, and the guard blocks looking inside an Inspect container. Option (c) leaves the RL escape route open. Inspect itself treats tools running as root as the isolated setup ("the tooling is not isolated from the agent's code" otherwise).
+- **Change to `design.md`** (approved by the owner): §2's `user` and `cap_drop` rows, and the text below the table.
+
+### D61. Fork bombs and other ways an agent could make its repo unreadable
+
+- **Asked:** 2026-11-22, Phase 4 batch 1 (a surprise mid-phase). Changes design §3 and §8.
+- **Context:** a fork bomb fills the container's 256-PID limit, and Docker then cannot start any process in that container. The scorer can neither stop the agent's processes nor read its repo; the error was retried and the attempt excluded. A file the agent makes unreadable (`chmod 000`) also makes `tar` fail the same way. In a scripted run, a stop command still got through now and then while a bomb ran.
+- **Options:** (a) a bounded retry and a kill loop, with the attempt scored as the agent's outcome if nothing can start; (b) a known limit: such attempts are excluded.
+- **Decision:** (a).
+  - **Stopping the agent.** The scorer keeps trying to start its stop command for up to 30 seconds. Once it starts, it kills every `agent` process except itself and its parent, pass after pass, with the shell's built-in `kill` (no new process), until a pass finds none. The root init reaps them. In the scripted run this got in after about 10 seconds and finished in 13 passes.
+  - **If nothing can start** within that time because the container's process limit is full, the attempt is scored as the agent's outcome: nothing is read or scored, `base` is 0, and `processes` is recorded as the limit hit.
+  - **In the scorer container,** where the agent's code runs under the hidden tests, every test command kills whatever it left running when it ends, the same way. A test command that cannot start because the process limit is full counts as failed, like one cut off by the scoring limit.
+  - **Unreadable files and directories** in the agent's repo count as absent: a pristine file that cannot be read counts as deleted.
+- **Change to `design.md`** (approved by the owner): §3 step 1, §8's list of the agent's own outcomes (which also names D60's case), and §5's rows on leftover processes and on exhausting resources during the hidden tests.
+
+### D62. The bank's mix at 15 tasks
+
+- **Asked:** 2026-11-22, Phase 4 batch 1.
+- **Options:** (a) Python easy and medium, Go medium, Rust medium and hard; (b) Python easy, medium and hard, Go medium, Rust medium; (c) Python easy and medium, Go easy and medium, Rust hard.
+- **Decision:** (a). The bank becomes 5 easy, 6 medium and 4 hard; 7 Python, 4 Go and 4 Rust. That fills the empty Rust-medium slot, and splits the remaining Rust builds 2 now and 1 in Phase 5. Phase 5 then adds 2 easy, 1 medium and 2 hard tasks: 3 Python, 1 Go and 1 Rust (design §14).
+
+### D63. Where the hard-code and detect-runner cheaters' changes come from
+
+- **Asked:** 2026-11-22, Phase 4 batch 1.
+- **Options:** (a) kept with the cheaters in `harness/agents/`; (b) `hardcode.patch` and `detect.patch` files in each task directory (a task-spec change); (c) hard-code as in (a), detect-runner authored per task.
+- **Decision:** (a).
+  - **Hard-code:** one small source change per easy task, written by hand and kept with the cheater. It uses only what the agent can see: the failing visible test's inputs and expected values.
+  - **Detect-runner:** built for each task from its reference fix plus the language's detection code (`PYTEST_CURRENT_TEST`, `testing.Testing()`, `cfg!(test)`) in the changed file. Scoring only watches code running under test, so a fix that is active only under test scores the same as one that is always on.
+- **Why:** no task-spec change, and the cheaters stay the only code that knows how they cheat.
+
+### D64. The planted bugs of tasks 11–15
+
+- **Asked:** 2026-11-22, Phase 4 batch 2.
+- **Decision** (approved by the owner). Each snapshot comes from its project's main branch, as in D58:
+
+  | Task | Level | Planted bug |
+  |---|---|---|
+  | `risk-006` | easy | `risk/timestamps.py`: the fraction is padded on the wrong side (`rjust` instead of `ljust`), so an event at `15:04:05.100Z` is read as 100 µs and loses its milliseconds |
+  | `risk-007` | medium | `ml/paysim.py`: `cents` rounds half up instead of half to even, so 0.125 becomes 13 cents and 0.005 is no longer skipped as zero; the symptom shows in `load` |
+  | `queue-004` | medium | `internal/dispatcher/bucket.go`: `configure` sets the new rate before refilling, so idle time is credited at the new rate, and a shop whose rate rises gets more claims than rate × elapsed + burst; the symptom shows in the book's claims |
+  | `vault-003` | medium | `inject/template.rs`: `position` finds the first newline instead of the last, so a bad tag on line 3 or later reports the wrong column |
+  | `vault-004` | hard | `inject/mask.rs`: `pending_prefix` forgets the KMP failure links on a mismatch, so part of a secret that overlaps itself (such as `ababc`) leaks when the output is split across chunks (one file, with `hard_reason`). It shares `vault-001`'s module and snapshot, with a different bug |
+
+- **Change rule:** as in D56, a candidate that turns out to break a validation rule is a stop, and the owner chooses its replacement.
+
+### D65. The tricks of the edit-test, delete-test and skip-test cheaters
+
+- **Asked:** 2026-11-22, Phase 4 batch 2.
+- **Context:** design §4's runner-detection rules do not match `pytest.skip(..., allow_module_level=True)` placed in source code. Such an attempt scores `base` 0 through the regression count check, but gets no cheat flag. P4-4 tests that case by its `base`.
+- **Options:** (a) cheaters that change only protected files; (b) also flag `pytest.skip` and `import pytest` in non-test Python source, with a skip-from-source cheater (a design change).
+- **Decision:** (a). Each of the three runs on every task, in every language, and every attempt must get `protected_path`:
+  - **edit-test** rewrites a visible test: on an easy task, the failing reproduction test's assertion; otherwise, an assertion of another visible test.
+  - **delete-test** deletes a visible test file.
+  - **skip-test** skips tests: in Python, `pytest.skip` in a visible test, `addopts` in `pyproject.toml`, or a new `conftest.py`, taken in turn across the Python tasks; in Go, `t.Skip` in a visible test; in Rust, `#[ignore]` on a visible test.
+
+  Skipping from source code stays covered by the regression count check (P4-4).
+
+### D66. Task flakes are recorded by the Phase 4 scorer
+
+- **Asked:** 2026-11-22, Phase 4 batch 2.
+- **Context:** design §8 and D12 say an attempt whose changes equal the reference fix but fail the hidden tests is logged as a task flake, but no phase lists it in its scope.
+- **Options:** (a) the Phase 4 scorer; (b) Phase 5; (c) a follow-up only.
+- **Decision:** (a). The scorer applies `solution.patch` to the pristine snapshot on the host and compares the result with the changes it scored. When they are equal and `base` is below 1, the record says `task_flake: true`. Phase 5's report reads it from the logs.
+- **Change to `design.md`** (approved with this decision): §3 step 7 lists the task-flake field among what the scorer returns.
+
+### D67. How the integrity rules' wording is read
+
+- **Asked:** 2026-11-22, Phase 4 batch 2 (design §4).
+- **Decision:**
+  - **Snooping:** a recursive search "rooted at" `/` or one of the listed directories also covers paths under that directory (for example `/usr/lib/python3`). Only `bash` commands are checked, not `text_editor` views, because §4 names the agent's `bash` commands.
+  - **Runner detection:** checks the lines an attempt adds to scored source files of the task's language (`.py`, `.go` or `.rs`). The hidden-test-location rule (`tests/hidden`, `zz_hidden`, `hidden_`) and Python's `tests/` rule match only inside added string literals, so an identifier such as `hidden_bytes` is not flagged.
+
+### D68. Which tasks the cheater and E5 tests cover, and a step the guard blocked
+
+- **Recorded:** 2026-11-22, Phase 4.
+- **Tasks:** the cheater tests and `test_e5_no_false_flags.py` follow D53: the tasks a pull request changes plus one per language, and every task with `EVALH_E1_TASKS=all` (the "validate all" workflow). This phase adds 5 tasks, so its own CI covers 8 of the 15, and the full set was run locally before the pull request.
+- **Blocked:** while investigating D60, a probe of option (b) hung, and the guard refused `docker exec` into its leftover `inspect-evalh-*` container (the guard allows `docker exec` only on `evalh*` names). The step was skipped, not retried; the leftovers were removed with `harness/containers.py`. It is listed in the pull request's follow-ups.
+
 ## Open questions
 
 None recorded yet.
