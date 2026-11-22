@@ -479,6 +479,59 @@ Every question asked during planning and building, the options considered, the a
   - Committing in a scratch copy of a snapshot to produce a patch with `git diff`, because the commit set a placeholder author. The patches are written with Python's `difflib` instead; no commit is involved.
   - An `rm` of a scratch directory by absolute path. A fresh temporary directory is used instead.
 
+## Phase 3
+
+### D51. Where the turn, time and scoring limits are applied
+
+- **Asked:** 2026-11-21, Phase 3 batch 1.
+- **Context:** Inspect 0.3.287 applies a task's `time_limit` to the solver and then gives the scorers half of it: 5 minutes for a 10-minute limit. But it treats a scorer that runs out of that time as a sample error, so the attempt would be retried as an infrastructure failure. Design §3 and §8 say the opposite: a scoring limit reached by slow or hanging code is the agent's outcome, and every unfinished test counts as failed.
+- **Options:** (a) apply the 30-turn and 10-minute limits around the agent in the harness's solver, with Inspect's own `turn_limit()` and `time_limit()`, leave the task's `time_limit` unset, and have the scorer enforce its own 5-minute limit on the test phase; (b) set the task's limits, and give the tests about 270 seconds so that Inspect's 300-second scoring limit never fires first; (c) set the task's limits and accept a scoring timeout as an infrastructure error.
+- **Decision:** (a). Inspect still records which agent limit was hit in the sample, and the harness copies it into the attempt's record. The scorer's limit covers design §3 step 6, the test phase. Every test not finished when it is reached counts as failed, and the record says `scoring` was the limit hit.
+- **Why:** it keeps design §3 and §8 exactly as written. Option (b) quietly shortens D21's scoring limit, and option (c) contradicts the design.
+
+### D52. How the limit tests exercise the limits
+
+- **Asked:** 2026-11-21, Phase 3 batch 1 (P3-4).
+- **Context:** the real 10-minute and 5-minute limits would add more than 15 minutes to every `make test` and CI run.
+- **Options:** (a) the limits are parameters whose defaults are the D21 values: the turn limit is tested at its real value, the time and scoring limits at a few seconds, and a static test checks the defaults; (b) the real values, in a test marked slow and run on request; (c) the real values in every run.
+- **Decision:** (a). `test_limits.py` runs the 30-turn limit as is, runs the time and scoring limits at a few seconds against an agent and a test that overrun them, and checks that the eval's defaults are 30 turns, 600 seconds and 300 seconds. Each limit test checks that the attempt's record names the limit hit.
+
+### D53. Which tasks the E3 leakage test covers
+
+- **Asked:** 2026-11-21, Phase 3 batch 1 (P3-2 and D15).
+- **Context:** P3-2 says E3 holds on every task; D15 says pull-request CI runs the E2–E6 tests on one task per language.
+- **Options:** (a) the tasks a pull request changes plus one per language, and every task in the "validate all" workflow; (b) every task in every run; (c) one task per language only.
+- **Decision:** (a), with the same selection as E1 (`EVALH_E1_TASKS=all` selects every task). This phase adds 7 of the 10 tasks, so its own CI covers all 10.
+
+### D54. The network probe's targets
+
+- **Asked:** 2026-11-21, Phase 3 batch 1 (E2 and D39).
+- **Options:** (a) real public targets: DNS names, public IP literals, HTTP to a name and to an IP literal, and Docker's host gateway, each with a short timeout and the output discarded; (b) only unroutable or local targets.
+- **Decision:** (a). With `network_mode: none` nothing leaves the container. Only a reachable target shows that isolation, not the target, is what makes the attempt fail. If isolation were ever broken, a few bytes would go out and nothing would be saved; that would be a failing test, not a download.
+
+### D55. The bank's mix at 10 tasks
+
+- **Asked:** 2026-11-21, Phase 3 batch 2.
+- **Options:** (a) 5 Python, 3 Go, 2 Rust; (b) 6, 2, 2; (c) 4, 3, 3.
+- **Decision:** (a). The 7 new tasks are 4 Python (easy, medium, medium, hard), 2 Go (easy, hard) and 1 Rust (easy). The bank becomes 4 easy, 3 medium and 3 hard, which leaves 5 Python, 2 Go and 3 Rust tasks for Phases 4 and 5 (design §14), so Rust builds are spread across phases.
+
+### D56. The planted bugs of tasks 4–10
+
+- **Asked:** 2026-11-21, Phase 3 batch 2.
+- **Decision** (approved by the owner). Each snapshot comes from its project's main branch:
+
+  | Task | Level | Planted bug |
+  |---|---|---|
+  | `risk-002` | easy | `ml/threshold.py`: `threshold_for` compares with `< at_most` instead of `<=`, so it holds one transfer fewer than the capacity allows |
+  | `risk-003` | medium | `ml/split.py`: `part_of` uses `>=` for the test days, so the split has 8 test days and the threshold days move; the symptom shows through `masks` |
+  | `risk-004` | medium | `risk/rules/ruleset.py`: the YAML loader stops recording the keys it has seen, so a rule file with a repeated key loads silently and the last value wins; the symptom shows through `parse` and `load` |
+  | `risk-005` | hard | `ml/metrics.py`: `average_precision` takes the precision at the first transfer of each run of tied scores instead of the last, so PR-AUC depends on the order of ties (one file, with `hard_reason`) |
+  | `queue-002` | easy | `internal/admission`: `RetryAfterSeconds` rounds down, so 1.5 seconds gives `Retry-After: 1` |
+  | `queue-003` | hard | `internal/scheduler/drr.go`: when a shop before the round-robin pointer empties, the pointer is not moved back, so the next shop loses its turn (one file, with `hard_reason`) |
+  | `vault-002` | easy | `inject::envfile::parse` looks for `#` on the raw line instead of the line without its leading blanks, so an indented comment is rejected as malformed |
+
+- **Change rule:** a candidate that turns out to break a validation rule (for example, a randomized visible test that catches it) is a stop, and the owner chooses its replacement.
+
 ## Open questions
 
 None recorded yet.
