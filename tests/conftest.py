@@ -134,3 +134,32 @@ def oracle_run(docker_engine: None, tmp_path_factory: pytest.TempPathFactory) ->
         patch.setattr(tiktoken, "get_encoding", no_tokenizer)
         log = run_eval(oracle_model(), task_ids=task_ids(), log_dir=str(log_dir))
     return OracleRun(log, calls, frozenset(sys.modules), log_dir)
+
+
+@pytest.fixture(scope="session")
+def failure_mode_runs(
+    docker_engine: None, tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, EvalLog]:
+    """The strong agent forced into each failure mode (design.md 6): a wrong and a partial patch
+    on one task per language, and giving up and running out of steps on the first Python task.
+    Keyed by outcome; shared by the scripted-agent and limit tests."""
+    from harness.agents.honest import honest_model
+    from harness.agents.outcomes import Outcome
+    from harness.eval import run_eval
+    from harness.tasks import load_task
+    from tests.runs import one_task_per_language
+
+    every_language = one_task_per_language()
+    python = [t for t in every_language if load_task(t).language == "python"]
+    plan = {
+        Outcome.WRONG: every_language,
+        Outcome.PARTIAL: every_language,
+        Outcome.GIVE_UP: python,
+        Outcome.OUT_OF_STEPS: python,
+    }
+    runs: dict[str, EvalLog] = {}
+    for outcome, tasks in plan.items():
+        log_dir = tmp_path_factory.mktemp(f"forced-{outcome.value}")
+        model = honest_model("strong", outcome=outcome)
+        runs[outcome.value] = run_eval(model, task_ids=tasks, log_dir=str(log_dir))
+    return runs
