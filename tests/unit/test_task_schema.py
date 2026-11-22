@@ -28,7 +28,18 @@ def rejected(raw: Any, task_id: str = "risk-001") -> TaskSpecError:
 
 
 def test_every_task_in_the_bank_loads() -> None:
-    assert task_ids() == ["queue-001", "risk-001", "vault-001"]
+    assert task_ids() == [
+        "queue-001",
+        "queue-002",
+        "queue-003",
+        "risk-001",
+        "risk-002",
+        "risk-003",
+        "risk-004",
+        "risk-005",
+        "vault-001",
+        "vault-002",
+    ]
     for task_id in task_ids():
         task = load_task(task_id)
         assert task.id == task_id

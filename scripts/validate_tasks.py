@@ -39,6 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from harness.attempt import SCORING_TIME_LIMIT_S
 from harness.containers import leftover_containers, remove_containers
 from harness.images import build_task_image
 from harness.integrity import is_protected, protected_changes
@@ -66,7 +67,7 @@ from harness.testrun import (
 
 RUNS = 5
 RUN_TIMEOUT_S = 900
-SCORING_LIMIT_S = 300  # D21: the scoring phase's limit; V13 allows half of it
+SCORING_LIMIT_S = SCORING_TIME_LIMIT_S  # D21: the scoring phase's limit; V13 allows half of it
 OUTPUT_TAIL_BYTES = 20_000
 # The fewest characters a patch line needs before V4 looks for it in an image: shorter lines,
 # such as `} else {`, occur everywhere.

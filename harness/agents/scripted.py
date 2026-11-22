@@ -2,7 +2,8 @@
 
 A policy is a plain function from the current turn to the next model output. The wrapper reads
 the sample's task id and epoch from Inspect's store (written by the harness's setup solver),
-counts the turns so far, and makes sure every output carries token usage.
+counts the turns so far, numbers each tool call by its turn (Inspect would give it a random id,
+and a rerun's log should equal the first's), and makes sure every output carries token usage.
 
 Why usage: when an output has none, `mockllm` estimates it with tiktoken, which downloads a
 tokenizer file from the internet on first use. Setting usage keeps a scripted run fully offline
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from inspect_ai.model import (
@@ -60,12 +61,22 @@ def scripted_model(policy: Policy, name: str) -> Model:
             step=sum(isinstance(m, ChatMessageAssistant) for m in messages),
             messages=messages,
         )
-        output = policy(turn)
+        output = with_stable_ids(policy(turn), turn.step)
         if output.usage is None:
             output.usage = ModelUsage(input_tokens=0, output_tokens=0, total_tokens=0)
         return output
 
     return get_model(f"{MODEL_NAME_PREFIX}{name}", custom_outputs=outputs, memoize=False)
+
+
+def with_stable_ids(output: ModelOutput, step: int) -> ModelOutput:
+    """The output with its tool calls numbered by turn: `call-<step>-<index>`."""
+    calls = output.message.tool_calls
+    if calls:
+        output.message.tool_calls = [
+            replace(call, id=f"call-{step}-{i}") for i, call in enumerate(calls)
+        ]
+    return output
 
 
 def tool_call(model: str, tool: str, **arguments: Any) -> ModelOutput:

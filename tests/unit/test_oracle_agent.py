@@ -177,21 +177,27 @@ def test_the_oracle_log_shows_bash_and_text_editor_calls(oracle_run: OracleRun) 
         assert [len(o.message.tool_calls or []) for o in outputs] == [1] * len(tools)
 
 
-# What each runner prints when its tests passed, and what it prints for a failure. The visible
-# tests of medium and hard tasks pass on the shipped bug; an easy task's reproduction test fails.
+# What each runner prints when every test it ran passed, and what it prints for a failure. The
+# visible tests of medium and hard tasks pass on the shipped bug; an easy task's reproduction test
+# fails, and it is the only test that does.
 ALL_PASSED = {
     "python": r"\b\d+ passed\b",
-    "go": r"(?m)^ok\s+\S+/internal/scheduler\b",
+    "go": r"(?m)^ok\s+\S+",
     "rust": r"test result: ok\. \d+ passed",
 }
 FAILURE = {"python": "failed", "go": "FAIL", "rust": "FAILED"}
+ONE_FAILED = {
+    "python": r"\b1 failed, \d+ passed\b",
+    "go": r"(?m)^--- FAIL: ",
+    "rust": r"test result: FAILED\. \d+ passed; 1 failed",
+}
 
 
 @pytest.mark.docker
 def test_the_visible_tests_run_in_the_agents_shell(oracle_run: OracleRun) -> None:
     """The preamble's test command works in the agent's (login) shell, offline, for every
-    language: on risk-001 the reproduction test fails before the fix, and on every task every
-    visible test passes after it."""
+    language: on an easy task exactly one test, the reproduction test, fails before the fix, and
+    on every task every visible test passes after it."""
     for task_id, sample in samples_by_task(oracle_run).items():
         runs = [
             str(e.result)
@@ -204,6 +210,7 @@ def test_the_visible_tests_run_in_the_agents_shell(oracle_run: OracleRun) -> Non
         assert re.search(ALL_PASSED[task.language], after), (task_id, after)
         assert FAILURE[task.language] not in after, (task_id, after)
         if task.difficulty == "easy":
-            assert re.search(r"\b1 failed, \d+ passed\b", before), before
+            assert len(re.findall(ONE_FAILED[task.language], before)) == 1, (task_id, before)
         else:
             assert re.search(ALL_PASSED[task.language], before), (task_id, before)
+            assert FAILURE[task.language] not in before, (task_id, before)

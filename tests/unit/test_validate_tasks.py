@@ -158,7 +158,7 @@ def test_a_changed_base_image_selects_every_task_of_its_language(
         return subprocess.CompletedProcess(args, 0, stdout="images/go/Dockerfile\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_diff)
-    assert validate_tasks.changed_task_ids("origin/main") == ["queue-001"]
+    assert validate_tasks.changed_task_ids("origin/main") == ["queue-001", "queue-002", "queue-003"]
 
 
 def test_a_changed_task_file_selects_that_task(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,5 +1,6 @@
-# Run by hand (D15): validates every task in the bank through the E1 test (D43). Run it before
-# merging a pull request that changes many tasks or the shared base images.
+# Run by hand (D15): validates every task in the bank through the E1 test (D43), and runs the E3
+# leakage probe on every task (D53). Run it before merging a pull request that changes many tasks
+# or the shared base images.
 name: validate-all
 
 on:
@@ -25,10 +26,10 @@ jobs:
           python-version: "3.12"
       - name: Install uv
         run: python -m pip install "uv==${UV_VERSION}"
-      - name: Validate every task
+      - name: Validate every task and probe each for leaks
         env:
           EVALH_E1_TASKS: all
-        run: uv run --frozen pytest -s tests/invariants/test_e1_validity.py
+        run: uv run --frozen pytest -s tests/invariants/test_e1_validity.py tests/invariants/test_e3_leakage.py
       - name: No containers left behind
         if: always()
         run: uv run --frozen python -m harness.containers

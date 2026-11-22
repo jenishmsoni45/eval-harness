@@ -10,23 +10,32 @@ After the agent submits, the scorer:
 4. runs each bug test on its own, then the regression suite, and computes `base` (D11).
 
 It uses only Inspect's sandbox interface (exec, read_file, write_file), so the RL environment can
-call the same code later. Dropping protected changes, the integrity checks, the reward with cheat
-flags and the scoring limit arrive in Phases 3 and 4. A Docker error is raised, not scored, so
+call the same code later. The tests of step 4 run within the scoring limit (design.md 3 step 6,
+D51): a test still running when it is reached is stopped, and it and every test not yet run count
+as failed. That is the agent's outcome, not an error. Dropping protected changes, the integrity
+checks and the reward with cheat flags arrive in Phase 4. A Docker error is raised, not scored, so
 Inspect retries the attempt (design.md 8).
+
+The score's metadata is the attempt's record (R5): the test results and changed files, the
+limits hit, the number of tool calls, the agent's and the scorer's wall time, and what a
+scripted agent wrote about itself (harness/attempt.py).
 """
 
 from __future__ import annotations
 
 import io
+import math
 import posixpath
 import tarfile
+import time
 import uuid
 from dataclasses import dataclass, field
 
 from inspect_ai.scorer import Score, Scorer, Target, mean, scorer
 from inspect_ai.solver import TaskState
-from inspect_ai.util import SandboxEnvironment, sandbox
+from inspect_ai.util import ExecResult, SandboxEnvironment, sandbox
 
+from harness.attempt import SCORING_LIMIT, SCORING_TIME_LIMIT_S, agent_record
 from harness.tasks import IGNORED_DIRS, IGNORED_SUFFIXES, Task, is_ignored, load_task, read_tree
 from harness.testrun import (
     REPO_DIR,
@@ -37,7 +46,7 @@ from harness.testrun import (
     regression_run,
 )
 
-# Phase 1 bound on each test command; the 5-minute scoring limit itself arrives in Phase 3.
+# Bound on each command that reads or writes the repo; the test commands share the scoring limit.
 COMMAND_TIMEOUT_S = 300
 # tar --exclude patterns for the ignored paths of task-spec.md, matched at any depth.
 TAR_EXCLUDES = tuple(
@@ -113,22 +122,52 @@ async def copy_hidden_tests(box: SandboxEnvironment, task: Task) -> None:
         await box.write_file(f"{REPO_DIR}/{path}", data)
 
 
-async def run_bug_test(box: SandboxEnvironment, task: Task, test_id: str) -> bool:
-    """Whether one bug test, run on its own, passes. A command that hangs past its bound counts
-    as failed: that is the agent's outcome, not an infrastructure failure (design.md 3 step 6)."""
-    command = bug_test_command(task, test_id)
+class Deadline:
+    """The scoring limit, shared by every test command of one attempt."""
+
+    def __init__(self, seconds: float) -> None:
+        self.end = time.monotonic() + seconds
+        self.hit = False
+
+    def timeout(self) -> int | None:
+        """Whole seconds left for the next command, or None (and the limit hit) if none are."""
+        left = math.ceil(self.end - time.monotonic())
+        if left <= 0:
+            self.hit = True
+            return None
+        return left
+
+
+async def run_test_command(
+    box: SandboxEnvironment, command: tuple[str, ...], deadline: Deadline
+) -> ExecResult[str] | None:
+    """Run one test command within what is left of the scoring limit; None if the limit was
+    reached first or while it ran. A timed-out command is never rerun (`timeout_retry`)."""
+    timeout = deadline.timeout()
+    if timeout is None:
+        return None
     try:
-        result = await box.exec(list(command), cwd=REPO_DIR, timeout=COMMAND_TIMEOUT_S)
+        return await box.exec(list(command), cwd=REPO_DIR, timeout=timeout, timeout_retry=False)
     except TimeoutError:
+        deadline.hit = True
+        return None
+
+
+async def run_bug_test(
+    box: SandboxEnvironment, task: Task, test_id: str, deadline: Deadline
+) -> bool:
+    """Whether one bug test, run on its own, passes. One that does not finish within the scoring
+    limit fails: that is the agent's outcome, not an infrastructure failure (design.md 3)."""
+    result = await run_test_command(box, bug_test_command(task, test_id), deadline)
+    if result is None:
         return False
     return bug_test_passed(task, result.returncode, result.stdout + result.stderr)
 
 
-async def run_regression(box: SandboxEnvironment, task: Task) -> bool:
+async def run_regression(box: SandboxEnvironment, task: Task, deadline: Deadline) -> bool:
     regression = regression_run(task)
-    try:
-        result = await box.exec(list(regression.command), cwd=REPO_DIR, timeout=COMMAND_TIMEOUT_S)
-    except TimeoutError:
+    result = await run_test_command(box, regression.command, deadline)
+    if result is None:
         return False
     report: str | None
     if regression.report_path is None:  # the runner's own output is the report
@@ -142,33 +181,52 @@ async def run_regression(box: SandboxEnvironment, task: Task) -> bool:
 
 
 async def score_attempt(
-    agent_box: SandboxEnvironment, scorer_box: SandboxEnvironment, task: Task
+    agent_box: SandboxEnvironment,
+    scorer_box: SandboxEnvironment,
+    task: Task,
+    scoring_limit_s: float = SCORING_TIME_LIMIT_S,
 ) -> Score:
+    start = time.monotonic()
     changes = diff_trees(read_tree(task.repo_dir), await read_repo(agent_box))
     await apply_changes(scorer_box, changes)
     await copy_hidden_tests(scorer_box, task)
-    bug_results = {t: await run_bug_test(scorer_box, task, t) for t in task.bug_tests}
-    regression_ok = await run_regression(scorer_box, task)
+    deadline = Deadline(scoring_limit_s)  # the test phase (design.md 3 step 6)
+    bug_results = {t: await run_bug_test(scorer_box, task, t, deadline) for t in task.bug_tests}
+    regression_ok = await run_regression(scorer_box, task, deadline)
     base = base_reward(list(bug_results.values()), regression_ok)
     return Score(
         value=base,
         explanation=(
             f"{sum(bug_results.values())} of {len(bug_results)} bug tests passed; "
             f"regression suite {'passed' if regression_ok else 'failed'}"
+            + ("; scoring limit reached" if deadline.hit else "")
         ),
         metadata={
             "base": base,
             "bug_tests": bug_results,
             "regression_passed": regression_ok,
             "changed_files": changes.paths,
+            "scoring_limit_hit": deadline.hit,
+            "scoring_seconds": round(time.monotonic() - start, 3),
         },
     )
 
 
 @scorer(metrics=[mean()])
-def hidden_tests() -> Scorer:
+def hidden_tests(scoring_limit_s: float = SCORING_TIME_LIMIT_S) -> Scorer:
     async def score(state: TaskState, target: Target) -> Score:
         task = load_task(str(state.metadata["task_id"]))
-        return await score_attempt(sandbox("default"), sandbox("scorer"), task)
+        result = await score_attempt(sandbox("default"), sandbox("scorer"), task, scoring_limit_s)
+        return with_attempt_record(result, state)
 
     return score
+
+
+def with_attempt_record(result: Score, state: TaskState) -> Score:
+    """The score with the agent phase's part of the record added (R5, harness/attempt.py)."""
+    metadata = dict(result.metadata or {})
+    record = agent_record(state.store, state.messages)
+    if metadata.get("scoring_limit_hit"):
+        record["limits_hit"].append(SCORING_LIMIT)
+    metadata.update(record)
+    return result.model_copy(update={"metadata": metadata})

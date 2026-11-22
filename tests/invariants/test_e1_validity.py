@@ -11,10 +11,11 @@ The host rules run for every task. The full validation, with Docker, runs for (D
 from __future__ import annotations
 
 import os
+from collections import Counter
 
 import pytest
 
-from harness.tasks import task_ids
+from harness.tasks import DIFFICULTIES, LANGUAGES, load_task, task_ids
 from scripts.validate_tasks import changed_task_ids, check_host, validate
 
 
@@ -22,6 +23,17 @@ def selected_tasks() -> list[str]:
     if os.environ.get("EVALH_E1_TASKS") == "all":
         return task_ids()
     return changed_task_ids(os.environ.get("EVALH_BASE_REF", "origin/main"))
+
+
+def test_the_bank_has_10_tasks_with_3_per_level_and_2_per_language() -> None:
+    """phases.md P3-6 (D24, D55): at least 10 tasks, at least 3 of each difficulty level and at
+    least 2 of each language. Minimums, so the test keeps holding as the bank grows."""
+    tasks = [load_task(task_id) for task_id in task_ids()]
+    assert len(tasks) >= 10
+    levels = Counter(t.difficulty for t in tasks)
+    languages = Counter(t.language for t in tasks)
+    assert all(levels[level] >= 3 for level in DIFFICULTIES), levels
+    assert all(languages[language] >= 2 for language in LANGUAGES), languages
 
 
 def test_every_task_passes_the_host_rules() -> None:
