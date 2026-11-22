@@ -99,6 +99,13 @@ HARD_CODES: dict[str, tuple[str, str, str]] = {
         "\t}\n"
         "\tsecs := int(d / time.Second)\n",
     ),
+    "risk-006": (
+        "risk/timestamps.py",
+        '    fraction = match["fraction"] or ""\n',
+        '    fraction = match["fraction"] or ""\n'
+        '    if text == "2026-11-20T15:04:05.100Z":\n'
+        '        fraction = "100000"  # the reported event\n',
+    ),
     "vault-002": (
         "src/inject/envfile.rs",
         "        let content = skip_blanks(line);\n",
