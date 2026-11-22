@@ -653,7 +653,10 @@ Every question asked during planning and building, the options considered, the a
 
 - **Recorded:** 2026-11-22, Phase 4.
 - **Tasks:** the cheater tests and `test_e5_no_false_flags.py` follow D53: the tasks a pull request changes plus one per language, and every task with `EVALH_E1_TASKS=all` (the "validate all" workflow). This phase adds 5 tasks, so its own CI covers 8 of the 15, and the full set was run locally before the pull request.
-- **Blocked:** while investigating D60, a probe of option (b) hung, and the guard refused `docker exec` into its leftover `inspect-evalh-*` container (the guard allows `docker exec` only on `evalh*` names). The step was skipped, not retried; the leftovers were removed with `harness/containers.py`. It is listed in the pull request's follow-ups.
+- **Blocked** (skipped, not retried; listed in the pull request's follow-ups):
+  - While investigating D60, a probe of option (b) hung, and the guard refused `docker exec` into its leftover `inspect-evalh-*` container (the guard allows `docker exec` only on `evalh*` names). The leftovers were removed with `harness/containers.py`.
+  - An `rm -rf` of a scratch directory by absolute path, while debugging the V11 test. The debugging was done in a Python temporary directory instead.
+  - Writing the adversarial tests in one shell command: one test's script ran `git -c user.name=… commit` inside the sandbox, which the guard reads as changing commit authorship. The `.git`-tampering test instead hides the fix from git with `git update-index --assume-unchanged` and plants files in `.git`, which tests the same thing without a commit.
 
 ## Open questions
 
