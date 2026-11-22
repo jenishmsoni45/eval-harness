@@ -532,6 +532,14 @@ Every question asked during planning and building, the options considered, the a
 
 - **Change rule:** a candidate that turns out to break a validation rule (for example, a randomized visible test that catches it) is a stop, and the owner chooses its replacement.
 
+### D57. What E2 checks about network interfaces
+
+- **Asked:** 2026-11-21, Phase 3, while building `test_e2_network.py`. Changes design §1.
+- **Context:** design §1 said the E2 test checks that "only the loopback interface exists". In a `network_mode: none` container on Docker Desktop, the kernel also creates its fallback tunnel devices (`gre0`, `gretap0`, `erspan0`, `ip_vti0`, `ip6_vti0`, `ip6gre0`, `ip6tnl0`, `sit0`, `tunl0`) in every new network namespace. Each is down, with no address and no route. Only `lo` is up; it holds the only addresses (127.0.0.0/8 and ::1), there is no IPv4 route, and the IPv6 routes are on `lo` only. Every DNS, TCP and HTTP probe fails as expected in both containers.
+- **Options:** (a) check that `lo` is the only interface that is up, has an address or has a route; (b) drop the interface check and rely on the probes and the static compose check; (c) keep "only lo exists", which `network_mode: none` cannot give on this kernel.
+- **Decision:** (a). The probe prints every interface's flags, the interfaces holding IPv6 addresses and routes, the number of IPv4 routes and every non-loopback address (`hostname -I`, with its exit status, so a missing command cannot pass the check).
+- **Change to `design.md`** (approved by the owner): §1's E2 test text now reads "the loopback interface is the only one that is up, has an address or has a route".
+
 ## Open questions
 
 None recorded yet.
