@@ -96,9 +96,10 @@ def test_text_editor_works_offline_and_no_container_remains(
     assert log.status == "success", log.error
     assert log.samples is not None
     tools = [m for m in log.samples[0].messages if isinstance(m, ChatMessageTool)]
-    # react() ends the loop on submit without a tool message for it.
-    assert [m.function for m in tools] == ["text_editor"] * 3 + ["bash"]
-    assert [m.error for m in tools] == [None] * 4
+    # The harness keeps the submit call and its tool message in the conversation (react()
+    # would drop them), so the attempt's record can count every tool call (harness/eval.py).
+    assert [m.function for m in tools] == ["text_editor"] * 3 + ["bash", "submit"]
+    assert [m.error for m in tools] == [None] * 5
     calls = [e.function for e in log.samples[0].events if isinstance(e, ToolEvent)]
     assert calls == ["text_editor"] * 3 + ["bash", "submit"]
     assert "beta" in tools[2].text
