@@ -36,6 +36,17 @@ def test_the_bank_has_10_tasks_with_3_per_level_and_2_per_language() -> None:
     assert all(languages[language] >= 2 for language in LANGUAGES), languages
 
 
+def test_the_bank_has_15_tasks_in_the_phase_4_mix() -> None:
+    """phases.md P4-7 (D24, D62): at least 15 tasks, with at least 5 easy, 6 medium and 4 hard,
+    and at least 7 Python, 4 Go and 4 Rust. Minimums, so the test keeps holding in Phase 5."""
+    tasks = [load_task(task_id) for task_id in task_ids()]
+    assert len(tasks) >= 15
+    levels = Counter(t.difficulty for t in tasks)
+    languages = Counter(t.language for t in tasks)
+    assert all(levels[k] >= n for k, n in {"easy": 5, "medium": 6, "hard": 4}.items()), levels
+    assert all(languages[k] >= n for k, n in {"python": 7, "go": 4, "rust": 4}.items()), languages
+
+
 def test_every_task_passes_the_host_rules() -> None:
     problems = {task_id: check_host(task_id)[1].problems() for task_id in task_ids()}
     assert problems == {task_id: [] for task_id in task_ids()}
