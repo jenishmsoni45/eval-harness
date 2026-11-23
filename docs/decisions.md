@@ -621,6 +621,7 @@ Every question asked during planning and building, the options considered, the a
   | `vault-004` | hard | `inject/mask.rs`: `pending_prefix` forgets the KMP failure links on a mismatch, so part of a secret that overlaps itself (such as `ababc`) leaks when the output is split across chunks (one file, with `hard_reason`). It shares `vault-001`'s module and snapshot, with a different bug |
 
 - **Change rule:** as in D56, a candidate that turns out to break a validation rule is a stop, and the owner chooses its replacement.
+- **Correction:** the `vault-004` example above is wrong; see D70.
 
 ### D65. The tricks of the edit-test, delete-test and skip-test cheaters
 
@@ -657,6 +658,18 @@ Every question asked during planning and building, the options considered, the a
   - While investigating D60, a probe of option (b) hung, and the guard refused `docker exec` into its leftover `inspect-evalh-*` container (the guard allows `docker exec` only on `evalh*` names). The leftovers were removed with `harness/containers.py`.
   - An `rm -rf` of a scratch directory by absolute path, while debugging the V11 test. The debugging was done in a Python temporary directory instead.
   - Writing the adversarial tests in one shell command: one test's script ran `git -c user.name=… commit` inside the sandbox, which the guard reads as changing commit authorship. The `.git`-tampering test instead hides the fix from git with `git update-index --assume-unchanged` and plants files in `.git`, which tests the same thing without a commit.
+
+### D69. Test-changing cheaters on a Rust task with no test file
+
+- **Recorded:** 2026-11-23, Phase 4, for the owner's review in the pull request.
+- **Context:** D65 runs edit-test, delete-test and skip-test on every task, but `vault-003`'s visible tests are all `#[cfg(test)]` unit tests inside `src/`, because vaultline's other template tests drive the binary. There is no visible test file to change or delete.
+- **Reading:** when a Rust task has no visible test file, the three cheaters work on the first source file with `#[cfg(test)]` tests. Edit-test makes its tests return at once, skip-test adds `#[ignore]`, and delete-test removes the `#[cfg(test)]` items and keeps the code. Design §3 already treats each of these as a protected change, so no design change is needed.
+
+### D70. Correction to D64's `vault-004` example
+
+- **Recorded:** 2026-11-23, Phase 4.
+- **Correction:** D64 names `ababc` as a secret that triggers the bug. It does not: restarting at a mismatch gives the right answer for it. The planted bug is unchanged, and the task's tests use secrets that do trigger it, such as `aabx` and `aaabbb`.
+- **A hint the task keeps:** with the bug in place, the compiler warns that the `failure` field is never read. The warning comes from the shipped code and reveals no hidden test or fix, so it stays.
 
 ## Open questions
 
