@@ -163,6 +163,7 @@ def test_a_changed_base_image_selects_every_task_of_its_language(
         "queue-002",
         "queue-003",
         "queue-004",
+        "queue-005",
     ]
 
 

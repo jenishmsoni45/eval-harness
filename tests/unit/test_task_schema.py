@@ -33,6 +33,7 @@ def test_every_task_in_the_bank_loads() -> None:
         "queue-002",
         "queue-003",
         "queue-004",
+        "queue-005",
         "risk-001",
         "risk-002",
         "risk-003",
@@ -40,10 +41,14 @@ def test_every_task_in_the_bank_loads() -> None:
         "risk-005",
         "risk-006",
         "risk-007",
+        "risk-008",
+        "risk-009",
+        "risk-010",
         "vault-001",
         "vault-002",
         "vault-003",
         "vault-004",
+        "vault-005",
     ]
     for task_id in task_ids():
         task = load_task(task_id)
