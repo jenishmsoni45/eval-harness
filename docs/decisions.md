@@ -680,9 +680,15 @@ Every question asked during planning and building, the options considered, the a
   - **Python:** a pytest plugin outside the repo prints the token with the counts of passed and skipped tests.
   - **Go:** a `TestMain` in each tested package prints it when `m.Run` returns 0.
   - **Rust:** libtest has no end-of-run hook, so each test target gets one extra test that sorts last, and targets run on one thread.
-  - The token is per attempt and added after the visible tests, only in the scorer container. A bug or regression run without it fails.
+  - The token is per attempt and added after the visible tests, only in the scorer container. A bug or regression run without it fails. The option as approved said per run. A per-run token would rebuild the Go or Rust tests for every command, and code that can find the token in one run can find it in any run, so per attempt loses no protection.
 - **Known limit:** the hook shares a machine and a user with the code under test, so code that deliberately finds the token can still forge a run. Closing that is option (b), a follow-up.
 - **Change to `design.md`** (approved with this decision): §3 step 6, and §5's reward property and table of attempts.
+
+### D72. No GitHub Actions for the Phase 4 pull request
+
+- **Decided:** 2026-11-23, by the owner, because few Actions minutes remain.
+- **Effect:** the pull request's head commit carries `[skip ci]`, so the `ci` workflow does not run and D68's CI coverage does not apply. Lint, the tests, the audit and the validation of every task were run locally.
+- **Not verified:** CI is the only place the Docker tests run on amd64. The local runs are on arm64.
 
 ## Open questions
 
