@@ -1,0 +1,19 @@
+[project]
+name = "risk-engine"
+version = "0.1.0"
+description = "Streaming risk decision engine for the tally ledger"
+requires-python = "==3.12.*"
+dependencies = ["numpy==2.5.4", "pyyaml==6.0.3"]
+
+[dependency-groups]
+dev = [
+    "hypothesis==6.170.9",
+    "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/visible"]
+# Test files in different folders may share a name.
+addopts = ["--import-mode=importlib", "-ra", "--strict-markers"]
+pythonpath = ["."]
+xfail_strict = true
