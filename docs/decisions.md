@@ -673,4 +673,14 @@ Every question asked during planning and building, the options considered, the a
 
 ## Open questions
 
-None recorded yet.
+### Q1. Code under test can forge a perfect score
+
+- **Raised:** 2026-11-23, Phase 4 self-review. This blocks the Phase 4 pull request.
+- **Problem:** the agent's code runs inside the test process, and the scorer trusts that process's exit code and report. A Python bug test passes on exit code 0 alone, and the regression check reads a JUnit file that the same process can write.
+- **Evidence:** on `risk-001`, an attempt whose only change was added to a source module did not fix the bug. The added code ended each test process with exit code 0, and when a report was requested it counted the tests by collecting them and wrote a report saying they all passed. The real scorer gave it full reward and no flag. Go and Rust also read results from the test process's output, but were not probed.
+- **What it breaks:** invariant 8 and design §5 ("Never above the hidden-test pass fraction"). A comment in `harness/testrun.py` deferred this hardening to Phase 4, but no phase criterion or design §5 row lists it.
+- **Options:**
+  - **(a) Harden and document (recommended).** A runner hook that exists only in the scorer container reports a random per-run token when the run really finishes, and the scorer requires it for every bug and regression run. Add a forged-result adversarial test per language, and state in design §5 that deliberate in-process tampering remains a known limit. Needs approval for the `design.md` change.
+  - **(b) Separate the test process from the code under test.** Closes more of the hole, but means reworking the runners and hidden tests of all 15 tasks, so it would be its own phase.
+  - **(c) Detection rules only.** Flag `os._exit`, `process::exit`, `os.Exit` and report paths. Small, but easy to evade, and it risks false flags on honest code.
+  - **(d) Document only.** Ship Phase 4 with the hole as a known limit and reword invariant 8 and design §5.
