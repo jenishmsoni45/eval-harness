@@ -42,8 +42,9 @@ from harness.testrun import AGENT_USER, REPO_DIR
 TASK_NAME = "evalh"
 COMPOSE_TEMPLATE = REPO_ROOT / "harness" / "sandbox" / "compose.yaml"
 
-# D21: three attempts at once. D18: up to 2 retries per attempt, and a run with more than 5% of
-# attempts failing is stopped. Passed to inspect_ai.eval() by run_eval().
+# D21: three attempts at once. D18: up to 2 retries per attempt, and an eval with 5% of its
+# attempts failing is stopped; the full run replaces that 5% with its run-wide budget (D74).
+# Passed to inspect_ai.eval() by run_eval().
 EVAL_OPTIONS: dict[str, Any] = {"max_samples": 3, "retry_on_error": 2, "fail_on_error": 0.05}
 
 # task-spec.md "instructions.md": the same preamble for every task, before its instructions.
@@ -158,14 +159,16 @@ def run_eval(
     *,
     task: Task | None = None,
     max_samples: int = EVAL_OPTIONS["max_samples"],
+    fail_on_error: float = EVAL_OPTIONS["fail_on_error"],
     **limits: Any,
 ) -> EvalLog:
     """Run the eval with the harness's concurrency and retry settings; return its log.
 
     `limits` are passed to `evalh` (max_turns, time_limit_s, scoring_limit_s). A test may pass
-    its own `task` built from `evalh`, and fewer samples at once.
+    its own `task` built from `evalh`, and fewer samples at once. The full run passes each eval
+    an absolute `fail_on_error` from its run-wide budget (D74); it overrides the task's own.
     """
-    options = {**EVAL_OPTIONS, "max_samples": max_samples}
+    options = {**EVAL_OPTIONS, "max_samples": max_samples, "fail_on_error": fail_on_error}
     logs = inspect_eval(
         task if task is not None else evalh(task_ids=task_ids, epochs=epochs, **limits),
         model=model,
