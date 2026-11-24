@@ -690,6 +690,48 @@ Every question asked during planning and building, the options considered, the a
 - **Effect:** the pull request's head commit carries `[skip ci]`, so the `ci` workflow does not run and D68's CI coverage does not apply. Lint, the tests, the audit and the validation of every task were run locally.
 - **Not verified:** CI is the only place the Docker tests run on amd64. The local runs are on arm64.
 
+## Phase 5
+
+### D73. The bank's mix at 20 tasks
+
+- **Asked:** 2026-11-23, Phase 5 batch 1.
+- **Decision:** tasks 16–20 are Python easy, hard and hard; Go easy; Rust medium. The final bank is Python 4 easy, 3 medium, 3 hard; Go 2, 2, 1; Rust 1, 2, 2; in total 7 easy, 7 medium and 6 hard, as design §14 requires.
+
+### D74. How the 5% rule is applied across a run
+
+- **Asked:** 2026-11-23, Phase 5 batch 1 (design §1 E6, §8, D18).
+- **Context:** D18's threshold is about the whole run: a run with more than 5% of its attempts excluded is invalid. Inspect's fractional `fail_on_error` applies to each eval on its own and aborts that eval mid-run once its errors reach the fraction times that eval's samples. Errors are counted once per sample, after its retries run out (`inspect_ai/_eval/task/error.py` and `run.py`, version 0.3.287). A run is several evals, one per scripted agent or cheater, so a per-eval 5% neither adds up to D18's rule nor stops the run when the total passes it.
+- **Decision:** a run-wide budget. `make eval` gives each eval an absolute `fail_on_error`: what is left of 5% of the whole run's attempts, counting the errors of the evals already run. The run stops as soon as more than 5% of its attempts are excluded. The report marks the run invalid when more than 5% of all attempts are excluded or any eval did not finish.
+- **Change to `design.md`** (approved with this decision): §1 E6 and §8 describe the run-wide budget instead of `fail_on_error=0.05`.
+
+### D75. Checks for the Phase 5 pull request
+
+- **Asked:** 2026-11-23, Phase 5 batch 1.
+- **Decision:** as in D72, the pull request's head commit carries `[skip ci]`. Lint, the tests, the audit and the validation of all 20 tasks run locally, and the pull request says amd64 is not verified.
+
+### D76. The planted bugs of tasks 16–20
+
+- **Asked:** 2026-11-24, Phase 5 batch 2.
+- **Decision** (approved by the owner). Snapshots come from each project's main branch: risk-engine `0b00ff8`, job-queue `6fcae04`, vaultline `bf61fea`.
+
+  | Task | Level | Planted bug |
+  |---|---|---|
+  | `risk-008` | easy | `risk/rules/ruleset.py`: `RuleSet.evaluate` takes the most lenient fired action instead of the strictest, so a transfer that fires a hold rule and a block rule is held, not blocked |
+  | `risk-009` | hard | `ml/paysim_rules.py`: the factor search narrows its list of candidate transfers after a factor that passes, not only after one that fails. Later factors are then checked on too few transfers, so the chosen factor can stop more than 1% of the training days' transfers (one file, with `hard_reason`: the candidates must be every transfer that the largest failing factor stops) |
+  | `risk-010` | hard | `ml/paysim.py` and `ml/split.py`: step s starts at step 1's time plus s hours, one hour late, and `day_of` subtracts an extra hour so the day split still lines up. Fixing either file alone leaves the clock wrong or breaks the split (two files) |
+  | `queue-005` | easy | `internal/queue/backoff.go`: `Bound` doubles once too often, so the delay after the first failure can be up to 4 s instead of 2 s |
+  | `vault-005` | medium | `inject/envfile.rs`: `split_assignment` splits a line at the last `=` instead of the first, so a value that contains `=` (such as `TOKEN=abc==`) is rejected as a bad variable name |
+
+- **Options weighed for `risk-010`:** (a) the step clock, as above; (b) the backtest's tie lines (D59 of risk-engine), one file with `hard_reason`, but about ties again and needing a new dependency for the shadow scorer; (c) the offline pipeline's same-millisecond rule, one file with `hard_reason`, but stated in the module's docstring. The owner chose (a), the bank's only hard task fixed in two files.
+- **Change rule:** as in D56, a candidate that turns out to break a validation rule is a stop, and the owner chooses its replacement.
+
+### D77. An unseeded visible test in `queue-005`
+
+- **Asked:** 2026-11-24, Phase 5 batch 2.
+- **Context:** job-queue's `TestBackoffDelayIsFullJitter` draws 4,000 delays from Go's unseeded generator and checks that they spread over the whole range. It fails only when every draw misses the bottom tenth or every draw misses the top tenth, a chance of about 2 × 0.9^4000. The regression run includes the visible tests, and D12 asks for fixed seeds.
+- **Options:** (a) keep it as job-queue wrote it; (b) drop it from the snapshot.
+- **Decision:** (a). D12's seed rule covers the tests this project writes; an existing project test whose failure chance is negligible stays unchanged, since the snapshot changes nothing but the planted bug.
+
 ## Open questions
 
 None recorded yet.
