@@ -55,9 +55,11 @@ def scripted(steps: list[ModelOutput]) -> Model:
     return scripted_model(policy, "adversary")
 
 
-def attempt(steps: list[ModelOutput], tmp_path: Path, **limits: Any) -> EvalSample:
-    """Run the script once on TASK; the attempt must be scored, not retried."""
-    log = run_eval(scripted(steps), task_ids=TASK, log_dir=str(tmp_path), **limits)
+def attempt(
+    steps: list[ModelOutput], tmp_path: Path, task_id: str = TASK, **limits: Any
+) -> EvalSample:
+    """Run the script once on a task; the attempt must be scored, not retried."""
+    log = run_eval(scripted(steps), task_ids=task_id, log_dir=str(tmp_path), **limits)
     [sample] = samples(log)
     assert sample.error is None, sample.error
     assert not sample.error_retries

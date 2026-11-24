@@ -15,8 +15,9 @@ After the agent submits or hits a limit, the scorer:
 5. writes the remaining changes into the idle `scorer` container, a fresh container of the same
    image;
 6. runs the visible tests from their pristine copies (no hidden test is in the container yet,
-   D40), copies the hidden tests in, then runs each bug test on its own and the regression suite.
-   Every test command kills whatever it left running when it ends. The tests share the scoring
+   D40), copies the hidden tests and the finish hook in (harness/finish_hook.py, D71), then runs
+   each bug test on its own and the regression suite; a run counts only if the hook shows it
+   reached its end. Every test command kills whatever it left running. The tests share the scoring
    limit (D51): a test still running when it is reached, and every test after it, count as
    failed, as does a test that cannot start because the process limit is full (D61);
 7. computes `base`, the flags, `reward` and `success` (D28), and whether the attempt is a task
@@ -57,6 +58,7 @@ from harness.attempt import (
     agent_record,
     bash_commands,
 )
+from harness.finish_hook import FinishHook, new_hook
 from harness.integrity import (
     CHEAT_FLAGS,
     DIFF_REJECTED,
@@ -80,11 +82,7 @@ from harness.testrun import (
     AGENT_USER,
     REPO_DIR,
     base_reward,
-    bug_test_command,
-    bug_test_passed,
     count_passed,
-    regression_passed,
-    regression_run,
     visible_run,
 )
 
@@ -279,15 +277,33 @@ async def apply_changes(
         await box.write_file(f"{REPO_DIR}/{path}", data, user=AGENT_USER)
 
 
+async def write_for_scoring(box: SandboxEnvironment, path: str, data: bytes) -> None:
+    try:
+        await box.write_file(path, data, user=AGENT_USER)
+    except RuntimeError as error:
+        if any(sign in str(error) for sign in PROCESS_LIMIT_ERRORS):
+            raise ProcessLimitError from error
+        raise
+
+
 async def copy_hidden_tests(box: SandboxEnvironment, task: Task) -> None:
     """Copy hidden_tests/ to its destination paths inside the repo, only now, only here."""
     for path, data in read_tree(task.hidden_tests_dir).items():
+        await write_for_scoring(box, f"{REPO_DIR}/{path}", data)
+
+
+async def install_finish_hook(box: SandboxEnvironment, hook: FinishHook) -> None:
+    """Add the finish hook to the scoring container (D71). A Rust target root the agent removed
+    or replaced is left alone: its build fails, so its tests count as failed."""
+    for path, data in hook.new_files().items():
+        await write_for_scoring(box, path, data)
+    for relpath in hook.rust_root_files():
+        path = f"{REPO_DIR}/{relpath}"
         try:
-            await box.write_file(f"{REPO_DIR}/{path}", data, user=AGENT_USER)
-        except RuntimeError as error:
-            if any(sign in str(error) for sign in PROCESS_LIMIT_ERRORS):
-                raise ProcessLimitError from error
-            raise
+            source = await box.read_file(path, text=False, user=AGENT_USER)
+        except (FileNotFoundError, IsADirectoryError, PermissionError):
+            continue
+        await write_for_scoring(box, path, source + hook.rust_module)
 
 
 class Deadline:
@@ -322,7 +338,11 @@ class TestPhase:
 
 
 async def run_test_command(
-    box: SandboxEnvironment, command: tuple[str, ...], deadline: Deadline, phase: TestPhase
+    box: SandboxEnvironment,
+    command: tuple[str, ...],
+    deadline: Deadline,
+    phase: TestPhase,
+    env: dict[str, str] | None = None,
 ) -> ExecResult[str] | None:
     """Run one test command within what is left of the scoring limit, then kill whatever it left
     running. None if the limit was reached first or while it ran (a timed-out command is never
@@ -334,6 +354,7 @@ async def run_test_command(
         result = await box.exec(
             ["sh", "-c", TEST_WRAPPER, "evalh-test", *command],
             cwd=REPO_DIR,
+            env=env or {},
             user=AGENT_USER,
             timeout=timeout,
             timeout_retry=False,
@@ -377,16 +398,20 @@ async def run_tests(box: SandboxEnvironment, task: Task, deadline: Deadline) -> 
         if deadline.hit:
             return phase
         await copy_hidden_tests(box, task)
+        hook = new_hook(task)
+        await install_finish_hook(box, hook)
         for test_id in task.bug_tests:
-            result = await run_test_command(box, bug_test_command(task, test_id), deadline, phase)
+            command = hook.bug_command(test_id)
+            result = await run_test_command(box, command, deadline, phase, hook.env)
             if result is not None:
                 output = result.stdout + result.stderr
-                phase.bug[test_id] = bug_test_passed(task, result.returncode, output)
-        regression = regression_run(task)
-        result = await run_test_command(box, regression.command, deadline, phase)
+                phase.bug[test_id] = hook.bug_passed(result.returncode, output)
+        regression = hook.regression()
+        result = await run_test_command(box, regression.command, deadline, phase, hook.env)
         if result is not None:
             report = await read_report(box, regression.report_path, result)
-            phase.regression_ok = regression_passed(task, result.returncode, report)
+            output = result.stdout + result.stderr
+            phase.regression_ok = hook.regression_passed(result.returncode, report, output)
     except ProcessLimitError:
         phase.process_limit_hit = True
     return phase
