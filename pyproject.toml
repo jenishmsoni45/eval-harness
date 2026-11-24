@@ -55,7 +55,7 @@ select = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["harness", "scripts", "tests"]
+files = ["harness", "scripts", "stats", "tests"]
 exclude = ["^task_bank/"]
 # tests/ and scripts/ have no __init__.py; module names start at the repo root.
 explicit_package_bases = true
