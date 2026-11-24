@@ -732,6 +732,22 @@ Every question asked during planning and building, the options considered, the a
 - **Options:** (a) keep it as job-queue wrote it; (b) drop it from the snapshot.
 - **Decision:** (a). D12's seed rule covers the tests this project writes; an existing project test whose failure chance is negligible stays unchanged, since the snapshot changes nothing but the planted bug.
 
+### D78. Readings for the statistics, the run and the report
+
+- **Recorded:** 2026-11-24, Phase 5, from the design and the earlier decisions; nothing new was asked.
+- **The full run** (`harness/run_plan.py`): strong, mid and weak, 6 epochs each on every task (D30), then each cheater once on every task its trick applies to: hard-code on the easy tasks (D63), the other five on every task (D65). The oracle is E5's fixture, not part of the run. The master seed is 20261124 and every attempt logs its seed. `make estimate` counts the plan without importing agent code (R4); a test checks that the plan's cheaters and their tasks are the agents' own.
+- **What the logs carry:** each sample's metadata adds the task's level and language, and each honest agent's record adds its rate for the task's level and σ. The report computes everything, the population rate included, from the logs alone, as the architecture requires of `stats/`.
+- **pass@k:** a task with fewer than k attempts left after exclusions is left out of the mean at that k only.
+- **Shared statistics code:** the population rate is in `stats/calibration.py`, a module the architecture's layout does not list. `scripts/power_estimate.py` now resamples with `stats/bootstrap.py` and computes the population rate with `stats/calibration.py`, drawing the same random numbers in the same order, so the §7.7 table is unchanged byte for byte (its test checks it). E7's coverage test therefore exercises the report's own interval code.
+- **The bootstrap in the report:** the seed, 20261124, is fixed in `stats/report.py` (design §9). Each statistic resamples its own list of tasks from that seed, so statistics over the same tasks share their resamples.
+- **The report** is `results/reports/report.md`, committed with the logs; `test_report.py` rebuilds it from the committed logs and compares bytes.
+  - An attempt missing from a log, because its eval stopped, counts as excluded.
+  - A task flake (D12) is listed and left out of every statistic. It does not count toward the 5%, which is about infrastructure failures (D18).
+  - Integrity: for each agent and cheater, each flag's share of the scored attempts, and how many of the flagged attempts were apparent passes, meaning the visible tests pass after the attempt (the architecture's "share of apparent passes flagged, per flag").
+- **Timing for `make estimate`:** `make timing` runs the oracle on the first task of each language in the bank's order (`risk-001`, `queue-001`, `vault-001`), three at once as in the full run, and logs to `results/timing/`, which is committed so the estimate can be rebuilt. The estimate gives every attempt of a language that language's longest oracle attempt, and assumes every task image is already built.
+- **Fault injection for E6** lives in `tests/faults.py`. A start failure is raised from Inspect's `DockerSandboxEnvironment.sample_init`, where a failed `docker compose up` surfaces. A mid-attempt kill is a `docker kill` of the attempt's own agent container, from the host, and only inside its own `inspect-evalh-*` compose project.
+- **No mixing:** `make timing` and `make eval` refuse a log directory that already holds logs, and delete nothing.
+
 ## Open questions
 
 None recorded yet.
