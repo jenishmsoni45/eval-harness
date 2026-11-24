@@ -748,6 +748,13 @@ Every question asked during planning and building, the options considered, the a
 - **Fault injection for E6** lives in `tests/faults.py`. A start failure is raised from Inspect's `DockerSandboxEnvironment.sample_init`, where a failed `docker compose up` surfaces. A mid-attempt kill is a `docker kill` of the attempt's own agent container, from the host, and only inside its own `inspect-evalh-*` compose project.
 - **No mixing:** `make timing` and `make eval` refuse a log directory that already holds logs, and delete nothing.
 
+### D79. How a container killed mid-attempt reaches a retry
+
+- **Recorded:** 2026-11-24, Phase 5, from the first runs of `test_e6_infra.py`.
+- **Finding:** in Inspect 0.3.287 a `bash` tool call into a container that has exited does not raise. It comes back to the agent as a tool error (`sandbox_unavailable`), and the attempt goes on. The attempt fails only when something reaches the container outside the `bash` tool: a `text_editor` call, whose tool injection fails (`SandboxInjectionError`), or the scorer, whose first step runs its own command in the agent's container (`SandboxUnavailableError`, which the scorer passes on). D60's "Inspect raises `SandboxUnavailableError`" describes where the attempt ends, not the first call that meets the dead container.
+- **Effect on E6:** none on the outcome. A killed container is still retried as an infrastructure failure and never scored, because the scorer always reaches the agent's container first and raises. An agent that only uses `bash` may spend turns on tool errors before that happens, which costs time and does not change any record.
+- **Tests:** both kill tests check that the retry's error says the sandbox is not running. The E4-across-a-retry test uses the real scorer, so the retry comes from the scorer, as it would in the full run. An earlier version used a no-op scorer and passed only because a broken helper raised an `AttributeError`; fixed before review.
+
 ## Open questions
 
 None recorded yet.

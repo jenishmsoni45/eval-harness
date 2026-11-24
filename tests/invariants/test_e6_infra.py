@@ -14,16 +14,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from inspect_ai import task_with
 from inspect_ai.log import EvalSample
 from inspect_ai.model import Model, ModelOutput
 
 from harness.agents.honest import honest_model
 from harness.agents.scripted import Turn, scripted_model, submit, tool_call
-from harness.eval import evalh, run_eval
+from harness.eval import run_eval
 from stats import report
 from tests.faults import (
     ALWAYS,
+    CONTAINER_GONE,
     START_FAILURE,
     failing_starts,
     kill_own_agent_container,
@@ -32,7 +32,6 @@ from tests.faults import (
 from tests.invariants.test_e4_clean_fs import (
     check,
     leave,
-    not_scored,
     parse_check,
     pristine_tree_hash,
 )
@@ -103,7 +102,10 @@ def test_a_container_killed_mid_attempt_is_retried_with_the_same_seed(
     assert kills == dict.fromkeys(one_task_per_language(), 1)
     for task_id, sample in by_task(log).items():
         assert sample.error is None
-        assert len(sample.error_retries or []) == 1, task_id
+        retries = sample.error_retries or []
+        assert len(retries) == 1, task_id
+        # The retry came from the killed container, not from anything else.
+        assert CONTAINER_GONE in retries[0].message, (task_id, retries[0].message)
         assert scored(sample) == scored(uninjected[task_id]), task_id
 
 
@@ -137,8 +139,9 @@ def test_a_container_that_fails_every_time_is_excluded_and_never_scored(
 
 
 def marker_then_killed_model(token: str) -> Model:
-    """On its first try at a task: check, leave markers everywhere, then kill its own container.
-    On the retry: check, then submit."""
+    """On its first try at a task: check, leave markers everywhere, check again, then kill its own
+    container and submit, so the scorer meets the dead container. On the retry: check, then
+    submit."""
     tries: dict[str, int] = {}
     first = [check(token), leave(token), check(token)]
 
@@ -146,11 +149,11 @@ def marker_then_killed_model(token: str) -> Model:
         if turn.step == 0:
             tries[turn.task_id] = tries.get(turn.task_id, 0) + 1
         model = "mockllm/marker"
+        if tries[turn.task_id] == 1 and turn.step < len(first):
+            return tool_call(model, "bash", command=first[turn.step])
         if tries[turn.task_id] == 1:
-            if turn.step == len(first):
-                kill_own_agent_container()
-                return tool_call(model, "bash", command="true")
-            return tool_call(model, "bash", command=first[min(turn.step, len(first) - 1)])
+            kill_own_agent_container()
+            return submit(model)
         return tool_call(model, "bash", command=check(token)) if turn.step == 0 else submit(model)
 
     return scripted_model(policy, "marker")
@@ -159,11 +162,14 @@ def marker_then_killed_model(token: str) -> Model:
 @pytest.mark.docker
 def test_a_retry_after_a_killed_container_starts_clean(docker_engine: None, tmp_path: Path) -> None:
     token = f"evalh-e6-{uuid.uuid4().hex}"
-    tasks = one_task_per_language()
-    task = task_with(evalh(task_ids=tasks), scorer=not_scored())
-    log = run_eval(marker_then_killed_model(token), log_dir=str(tmp_path), task=task)
+    # The real scorer: it is what meets the dead container and fails the first try.
+    log = run_eval(
+        marker_then_killed_model(token), task_ids=one_task_per_language(), log_dir=str(tmp_path)
+    )
     for task_id, sample in by_task(log).items():
-        assert len(sample.error_retries or []) == 1, task_id
+        retries = sample.error_retries or []
+        assert len(retries) == 1, task_id
+        assert CONTAINER_GONE in retries[0].message, (task_id, retries[0].message)
         [retry_check] = bash_outputs(sample)  # the final try's only bash call
         assert parse_check(retry_check) == {
             "holds-token": [],

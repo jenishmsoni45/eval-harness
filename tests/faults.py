@@ -6,8 +6,8 @@ attempts.
   given number of times per task (or every time), the way a failed `docker compose up` surfaces.
 - **A container killed mid-attempt.** `killing_model` plays an honest scripted agent and, on its
   first try at a chosen task, kills its own agent container from the host with `docker kill`
-  before its second turn's tool call runs. Inspect then finds the container gone and raises
-  `SandboxUnavailableError` (D60).
+  before its second turn's tool call runs. The attempt then fails when its next text_editor call
+  or the scorer reaches the dead container, and Inspect retries it (D79).
 
 Only containers of the attempt's own `inspect-evalh-*` compose project are touched.
 """
@@ -32,6 +32,11 @@ from harness.agents.scripted import Turn, scripted_model
 from harness.attempt import AGENT_INFO_KEY
 
 START_FAILURE = "injected fault: the sample's containers failed to start"
+# What Inspect's errors say about a container that has exited, whichever call meets it first:
+# the scorer's own command (SandboxUnavailableError) or a tool's injection (SandboxInjectionError).
+# A bash tool call into it is not an error at all: it comes back to the agent as a tool error
+# (D79), so the attempt fails only once the scorer, or a text_editor call, reaches the container.
+CONTAINER_GONE = "The sandbox is not running"
 ALWAYS = 10**9
 
 
@@ -60,7 +65,8 @@ def failing_starts(
 
 def kill_own_agent_container() -> str:
     """Kills the running sample's agent (`default`) container from the host; returns its name."""
-    project = sandbox()._project.name  # type: ignore[attr-defined]
+    # sandbox() is Inspect's logging proxy; as_type() gives the Docker environment under it.
+    project = sandbox().as_type(DockerSandboxEnvironment)._project.name
     if not project.startswith("inspect-evalh"):
         raise AssertionError(f"refusing to touch the compose project {project!r}")
     names = subprocess.run(
