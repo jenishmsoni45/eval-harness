@@ -671,16 +671,19 @@ Every question asked during planning and building, the options considered, the a
 - **Correction:** D64 names `ababc` as a secret that triggers the bug. It does not: restarting at a mismatch gives the right answer for it. The planted bug is unchanged, and the task's tests use secrets that do trigger it, such as `aabx` and `aaabbb`.
 - **A hint the task keeps:** with the bug in place, the compiler warns that the `failure` field is never read. The warning comes from the shipped code and reveals no hidden test or fix, so it stays.
 
+### D71. Test results forged by the code under test
+
+- **Asked:** 2026-11-23, Phase 4 self-review.
+- **Problem:** the agent's code runs inside the test process, and the scorer trusted that process's exit code and report. Played against the real scorer, a source change that left the bug in place earned full reward with no flag in Python, by exiting 0 and writing a JUnit report. The same forgery scored its bug tests as passed in Go, by printing `--- PASS` lines, and in Rust, by printing a `test result: ok` line. A `pytest.skip` raised from source on the input the bug gets wrong also counted as a passing bug test. This broke invariant 8 and design §5.
+- **Options:** (a) a scorer-only hook that reports a random token when a run really finishes, with forged-result tests and a documented limit; (b) separate the test process from the code under test, reworking all 15 tasks; (c) detection rules only; (d) document only.
+- **Decision:** (a), by the owner.
+  - **Python:** a pytest plugin outside the repo prints the token with the counts of passed and skipped tests.
+  - **Go:** a `TestMain` in each tested package prints it when `m.Run` returns 0.
+  - **Rust:** libtest has no end-of-run hook, so each test target gets one extra test that sorts last, and targets run on one thread.
+  - The token is per attempt and added after the visible tests, only in the scorer container. A bug or regression run without it fails.
+- **Known limit:** the hook shares a machine and a user with the code under test, so code that deliberately finds the token can still forge a run. Closing that is option (b), a follow-up.
+- **Change to `design.md`** (approved with this decision): §3 step 6, and §5's reward property and table of attempts.
+
 ## Open questions
 
-### Q1. Code under test can forge a perfect score
-
-- **Raised:** 2026-11-23, Phase 4 self-review. This blocks the Phase 4 pull request.
-- **Problem:** the agent's code runs inside the test process, and the scorer trusts that process's exit code and report. A Python bug test passes on exit code 0 alone, and the regression check reads a JUnit file that the same process can write.
-- **Evidence:** on `risk-001`, an attempt whose only change was added to a source module did not fix the bug. The added code ended each test process with exit code 0, and when a report was requested it counted the tests by collecting them and wrote a report saying they all passed. The real scorer gave it full reward and no flag. Go and Rust also read results from the test process's output, but were not probed.
-- **What it breaks:** invariant 8 and design §5 ("Never above the hidden-test pass fraction"). A comment in `harness/testrun.py` deferred this hardening to Phase 4, but no phase criterion or design §5 row lists it.
-- **Options:**
-  - **(a) Harden and document (recommended).** A runner hook that exists only in the scorer container reports a random per-run token when the run really finishes, and the scorer requires it for every bug and regression run. Add a forged-result adversarial test per language, and state in design §5 that deliberate in-process tampering remains a known limit. Needs approval for the `design.md` change.
-  - **(b) Separate the test process from the code under test.** Closes more of the hole, but means reworking the runners and hidden tests of all 15 tasks, so it would be its own phase.
-  - **(c) Detection rules only.** Flag `os._exit`, `process::exit`, `os.Exit` and report paths. Small, but easy to evade, and it risks false flags on honest code.
-  - **(d) Document only.** Ship Phase 4 with the hole as a known limit and reword invariant 8 and design §5.
+None recorded yet.

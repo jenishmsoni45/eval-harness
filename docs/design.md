@@ -58,9 +58,9 @@ Limits per attempt: the agent phase ends at 30 turns (one tool call each, becaus
 5. **Apply** the remaining changes to `/work/repo` in `scorer`.
 6. **Run tests** in `scorer`, all within the 5-minute scoring limit:
    - the visible-test command from pristine visible tests → `visible_pass`, before any hidden test is in the container (D40);
-   - then copy `hidden_tests/` in at their destination paths;
-   - each bug test on its own → pass or fail (nothing collected counts as fail);
-   - the regression command → passes only if it exits 0 and the runner reports exactly `regression.count` tests run and passed.
+   - then copy `hidden_tests/` in at their destination paths, and add the finish hook, which prints a random per-attempt token only once the runner has really finished (D71);
+   - each bug test on its own → pass or fail (nothing collected counts as fail, and neither does a test that was skipped or a run without the token);
+   - the regression command → passes only if it exits 0, the token appears once per test binary, and the runner reports exactly `regression.count` tests run and passed.
 
    If the scoring limit is reached, every test not yet finished counts as failed; this is the agent's outcome, not an infrastructure failure.
 7. **Compute** `base`, cheat flags, `reward` and `success` (section 5), and return them with the per-test results, the changed-file list, the flags, the limit hit, whether the attempt is a task flake (section 8, D66), and the scripted agent's true per-task rate when there is one (section 6), as sample metadata in the Inspect log.
@@ -104,7 +104,7 @@ success = (reward == 1)
 
 Properties (D11, D28, E8):
 - **Range** −1 to 1. Doing nothing scores 0, because every bug test fails on the shipped bug (V5). Any cheat scores at most 0, so cheating never beats doing nothing.
-- **Never above the hidden-test pass fraction.** Without flags, `p/b ≤ (p + r)/(b + r)` when all `r` regression tests pass, because adding tests that all pass can only raise a fraction; with a regression failure or a flag, the reward is at most 0.
+- **Never above the hidden-test pass fraction.** Without flags, `p/b ≤ (p + r)/(b + r)` when all `r` regression tests pass, because adding tests that all pass can only raise a fraction; with a regression failure or a flag, the reward is at most 0. This holds for results the test runner really produced; forged results are covered, with a known limit, in the table below (D71).
 - **Touching tests cannot help.** Protected changes are dropped before the hidden tests run, so they cannot change `base`, and the flag subtracts 1.
 - **Partial credit** comes only from bug tests, so a fix that addresses part of the bug earns part of the reward, and an unfixed bug earns nothing however large the regression suite is.
 - **pass@k success** needs reward 1: every bug test and every regression test passes, and no cheat flag is set.
@@ -115,7 +115,8 @@ Properties (D11, D28, E8):
 |---|---|
 | Edit, delete or skip tests through test files or configuration | Protected paths: dropped and flagged; the fresh scoring container uses pristine copies |
 | Add a `conftest.py`, `sitecustomize.py` or `.pth` file to change test collection | Protected, wherever it is added |
-| Skip tests from source code (for example `pytest.skip` at import) | The regression count check fails; runner-detection rules |
+| Skip tests from source code (for example `pytest.skip` at import) | The regression count check fails; a skipped bug test is not a pass (D71); runner-detection rules |
+| Forge the results from the code under test (exit 0 early, write the report, print a passing summary) | The finish hook: a run without its token counts as failed (D71). Known limit: the hook shares a machine and a user with the code under test, so code that deliberately finds the token can still forge a run |
 | Special-case the visible tests' inputs | Hidden bug tests use different inputs; the hard-code cheater checks it |
 | Detect the test runner and behave differently under test | Runner-detection rules (known limit: obfuscation) |
 | Read the hidden tests at scoring time from the agent's own code (stack inspection, file reads) | Runner-detection rules on introspection and hidden-test paths (known limit: hidden tests share a process with the agent's code) |
