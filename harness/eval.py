@@ -35,7 +35,7 @@ from harness.images import build_task_image
 from harness.sample_identity import record_sample_identity
 from harness.scorer import hidden_tests
 from harness.tasks import REPO_ROOT, load_task, task_ids
-from harness.testrun import REPO_DIR
+from harness.testrun import AGENT_USER, REPO_DIR
 
 # Inspect names each sample's compose project inspect-<first 12 characters of the task name>-i
 # <random>, so this name gives inspect-evalh-i<random> (D25).
@@ -82,9 +82,12 @@ def limited_agent(max_turns: int = MAX_TURNS, time_limit_s: float = AGENT_TIME_L
     """
     # attempts=1: with more, react() would score mid-attempt and tell the agent the result.
     # keep_in_messages: react() would otherwise drop the submit call from the conversation, and
-    # the record counts tool calls from it.
+    # the record counts tool calls from it. Both tools run as `agent`, never as the containers'
+    # root init (D60).
     agent = react(
-        tools=[bash(), text_editor()], attempts=1, submit=AgentSubmit(keep_in_messages=True)
+        tools=[bash(user=AGENT_USER), text_editor(user=AGENT_USER)],
+        attempts=1,
+        submit=AgentSubmit(keep_in_messages=True),
     )
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:

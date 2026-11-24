@@ -22,6 +22,9 @@ from dataclasses import dataclass
 from harness.tasks import Task
 
 REPO_DIR = "/work/repo"
+# The user every tool call and every scorer command runs as, in both containers of an attempt;
+# only the containers' init and keep-alive run as root (design.md 2, D60).
+AGENT_USER = "agent"
 # Where a Python run writes its JUnit report, inside the scoring or validation container.
 REPORT_PATH = "/tmp/evalh-{name}-report.xml"  # noqa: S108 (a fixed path in a container)
 
@@ -95,8 +98,8 @@ def count_passed(task: Task, report: str) -> int:
     - Go: `pass` events of a test or subtest (events without a test are the package's own);
     - Rust: the sum of `N passed` over the `test result:` lines, one per test target.
 
-    The report comes from the harness's own run, but the agent's code runs in that process too;
-    hardening against a forged report is Phase 4's adversarial work.
+    The report comes from the harness's own run, but the agent's code runs in that process too,
+    so the scorer also requires the finish hook's token (harness/finish_hook.py, D71).
     """
     if task.language == "python":
         root = ET.fromstring(report)  # noqa: S314

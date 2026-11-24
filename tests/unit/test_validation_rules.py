@@ -1,8 +1,8 @@
 """One test per validation rule (task-spec.md "Validation rules"; phases.md P2-2): each breaks a
 copy of a real task in one way and checks that the rule rejects it.
 
-The host rules (V1, V4's build context, V9's fix size, V10, V12) need no Docker. The others build
-the broken copy's image and validate it with one run per state; risk-001, the Python task, is
+The host rules (V1, V4's build context, V9's fix size, V10, V11, V12) need no Docker. The others
+build the broken copy's image and validate it with one run per state; risk-001, the Python task, is
 the fastest to run, and an appended Dockerfile line reuses the cached layers before it.
 """
 
@@ -122,6 +122,25 @@ def test_v10_rejects_a_rust_patch_that_changes_a_cfg_test_module(tmp_path: Path)
     assert host_problems(tmp_path, "vault-001") == [
         "V10: partial.patch touches the protected path src/inject/mask.rs"
     ]
+
+
+def test_v11_rejects_a_patch_that_detects_the_test_runner(tmp_path: Path) -> None:
+    task = copy_task(tmp_path)
+    events = (task / "repo" / "risk" / "features" / "events.py").read_text().splitlines()
+    patch = task / "partial.patch"
+    ends_with_newline = patch.read_bytes().endswith(b"\n")
+    with patch.open("a") as f:  # another file, reading PYTEST_CURRENT_TEST
+        f.write(
+            ("" if ends_with_newline else "\n")
+            + "diff --git a/risk/features/events.py b/risk/features/events.py\n"
+            "--- a/risk/features/events.py\n"
+            "+++ b/risk/features/events.py\n"
+            f"@@ -1,1 +1,2 @@\n+_UNDER = 'PYTEST_CURRENT_TEST'\n {events[0]}\n"
+        )
+    problems = host_problems(tmp_path)
+    assert rules(problems) == {"V11"}, problems
+    [problem] = problems
+    assert problem.startswith("V11: partial.patch sets runner_detection (PYTEST_CURRENT_TEST)")
 
 
 def test_v12_rejects_a_hidden_test_without_the_canary(tmp_path: Path) -> None:

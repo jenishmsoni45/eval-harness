@@ -22,8 +22,10 @@ AGENT_TIME_LIMIT_S = 600
 SCORING_TIME_LIMIT_S = 300
 
 # The name a limit has in the record: Inspect's own "turn" and "time" for the agent phase, and
-# this one for the scorer's.
+# these for the scorer's: its time limit, and a process limit the agent filled so that nothing
+# could start (D61).
 SCORING_LIMIT = "scoring"
+PROCESSES_LIMIT = "processes"
 
 LIMIT_HIT_KEY = "evalh:limit_hit"
 AGENT_SECONDS_KEY = "evalh:agent_seconds"
@@ -35,6 +37,17 @@ def tool_calls(messages: list[ChatMessage]) -> int:
     conversation). A generation that went past the turn limit is never added to the
     conversation, so its call, which never ran, is not counted."""
     return sum(len(m.tool_calls or []) for m in messages if isinstance(m, ChatMessageAssistant))
+
+
+def bash_commands(messages: list[ChatMessage]) -> list[str]:
+    """The agent's bash commands, in order, for the snooping check (design.md 4)."""
+    return [
+        str(call.arguments.get("command", ""))
+        for m in messages
+        if isinstance(m, ChatMessageAssistant)
+        for call in m.tool_calls or []
+        if call.function == "bash"
+    ]
 
 
 def agent_record(store: Any, messages: list[ChatMessage]) -> dict[str, Any]:

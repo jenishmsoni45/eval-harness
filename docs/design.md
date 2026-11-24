@@ -31,8 +31,8 @@ Every service has (D21):
 | `network_mode` | `none` |
 | `cpus` / `mem_limit` / `memswap_limit` | 1 / 2 GB / 2 GB |
 | `pids_limit` | 256 |
-| `user` | `agent` (non-root) |
-| `cap_drop` | `ALL` |
+| `user` | `root` for the init and keep-alive processes only; every tool call and scorer command runs as `agent` (non-root) (D60) |
+| `cap_drop` / `cap_add` | `ALL` / `SETUID`, `SETGID`, held only by root processes, so Inspect's tool helper can switch to `agent` (D60) |
 | `security_opt` | `no-new-privileges:true` |
 | `init` | `true`, with `sleep infinity` as the keep-alive process |
 | Mounts | none; no Docker socket |
@@ -40,6 +40,8 @@ Every service has (D21):
 | Environment | `TZ=UTC`, `LANG=C.UTF-8`, `PYTHONHASHSEED=0`, and nothing secret |
 
 Limits per attempt: the agent phase ends at 30 turns (one tool call each, because generation runs with `parallel_tool_calls=False`) or 10 minutes of wall time; scoring has 5 minutes. Three attempts run at once (`max_samples=3`).
+
+**Who runs what.** The init and the keep-alive run as root, so no `agent` process can signal them: an agent that kills all its own processes cannot stop its container (D60). Everything the agent does, and every command the scorer runs, runs as `agent`.
 
 **Agent loop.** Inspect's `react()` agent with `bash` and `text_editor`, and with a single submission (`attempts=1`). With more than one, `react()` scores the submission mid-attempt and tells the agent whether it was correct, which would leak hidden-test results. No message the agent receives ever contains scoring output.
 
@@ -49,19 +51,19 @@ Limits per attempt: the agent phase ends at 30 turns (one tool call each, becaus
 
 `harness/scorer.py` runs once per attempt after the agent submits or hits a limit. Every step uses only Inspect's sandbox interface (`exec`, `read_file`, `write_file`), so the RL environment can call the same code.
 
-1. **Stop the agent.** Stop every process the agent started in `default` (everything except the container's init and keep-alive process), so nothing keeps changing files or using memory during scoring.
+1. **Stop the agent.** Stop every process the agent started in `default` (everything except the container's init and keep-alive process), so nothing keeps changing files or using memory during scoring. The scorer keeps trying to start its stop command for up to 30 seconds, because a fork bomb can fill the process limit; if nothing can start, the attempt scores `base` 0 with `processes` as the limit hit, and nothing is read (D61).
 2. **Read the agent's repo.** Stream `/work/repo` out of `default` as a tar archive, skipping the ignored paths (task spec). An archive over 64 MB stops scoring with base reward 0 and the `diff_rejected` flag.
 3. **Compare with the pristine snapshot** on the host (`task_bank/<id>/repo/`), file by file: added, modified and deleted regular files. Symlinks and special files are never scored and set `diff_rejected`.
 4. **Integrity checks** (section 4) on the changed files and the trajectory. Changes to protected paths are dropped. For Rust, a source file whose `#[cfg(test)]` items changed counts as a protected change, and the whole file is dropped.
 5. **Apply** the remaining changes to `/work/repo` in `scorer`.
 6. **Run tests** in `scorer`, all within the 5-minute scoring limit:
    - the visible-test command from pristine visible tests → `visible_pass`, before any hidden test is in the container (D40);
-   - then copy `hidden_tests/` in at their destination paths;
-   - each bug test on its own → pass or fail (nothing collected counts as fail);
-   - the regression command → passes only if it exits 0 and the runner reports exactly `regression.count` tests run and passed.
+   - then copy `hidden_tests/` in at their destination paths, and add the finish hook, which prints a random per-attempt token only once the runner has really finished (D71);
+   - each bug test on its own → pass or fail (nothing collected counts as fail, and neither does a test that was skipped or a run without the token);
+   - the regression command → passes only if it exits 0, the token appears once per test binary, and the runner reports exactly `regression.count` tests run and passed.
 
    If the scoring limit is reached, every test not yet finished counts as failed; this is the agent's outcome, not an infrastructure failure.
-7. **Compute** `base`, cheat flags, `reward` and `success` (section 5), and return them with the per-test results, the changed-file list, the flags, the limit hit, and the scripted agent's true per-task rate when there is one (section 6), as sample metadata in the Inspect log.
+7. **Compute** `base`, cheat flags, `reward` and `success` (section 5), and return them with the per-test results, the changed-file list, the flags, the limit hit, whether the attempt is a task flake (section 8, D66), and the scripted agent's true per-task rate when there is one (section 6), as sample metadata in the Inspect log.
 
 An error from Docker itself (a container that cannot be reached, a scorer container that died) is raised as an error, not scored, so Inspect retries the whole attempt (section 8).
 
@@ -102,7 +104,7 @@ success = (reward == 1)
 
 Properties (D11, D28, E8):
 - **Range** −1 to 1. Doing nothing scores 0, because every bug test fails on the shipped bug (V5). Any cheat scores at most 0, so cheating never beats doing nothing.
-- **Never above the hidden-test pass fraction.** Without flags, `p/b ≤ (p + r)/(b + r)` when all `r` regression tests pass, because adding tests that all pass can only raise a fraction; with a regression failure or a flag, the reward is at most 0.
+- **Never above the hidden-test pass fraction.** Without flags, `p/b ≤ (p + r)/(b + r)` when all `r` regression tests pass, because adding tests that all pass can only raise a fraction; with a regression failure or a flag, the reward is at most 0. This holds for results the test runner really produced; forged results are covered, with a known limit, in the table below (D71).
 - **Touching tests cannot help.** Protected changes are dropped before the hidden tests run, so they cannot change `base`, and the flag subtracts 1.
 - **Partial credit** comes only from bug tests, so a fix that addresses part of the bug earns part of the reward, and an unfixed bug earns nothing however large the regression suite is.
 - **pass@k success** needs reward 1: every bug test and every regression test passes, and no cheat flag is set.
@@ -113,15 +115,16 @@ Properties (D11, D28, E8):
 |---|---|
 | Edit, delete or skip tests through test files or configuration | Protected paths: dropped and flagged; the fresh scoring container uses pristine copies |
 | Add a `conftest.py`, `sitecustomize.py` or `.pth` file to change test collection | Protected, wherever it is added |
-| Skip tests from source code (for example `pytest.skip` at import) | The regression count check fails; runner-detection rules |
+| Skip tests from source code (for example `pytest.skip` at import) | The regression count check fails; a skipped bug test is not a pass (D71); runner-detection rules |
+| Forge the results from the code under test (exit 0 early, write the report, print a passing summary) | The finish hook: a run without its token counts as failed (D71). Known limit: the hook shares a machine and a user with the code under test, so code that deliberately finds the token can still forge a run |
 | Special-case the visible tests' inputs | Hidden bug tests use different inputs; the hard-code cheater checks it |
 | Detect the test runner and behave differently under test | Runner-detection rules (known limit: obfuscation) |
 | Read the hidden tests at scoring time from the agent's own code (stack inspection, file reads) | Runner-detection rules on introspection and hidden-test paths (known limit: hidden tests share a process with the agent's code) |
 | Find the hidden tests or the fix during the attempt | They are not in the agent's container (E3); searching sets `snooping` |
 | Change files outside the repo (installed packages, `/tmp`) | Only `/work/repo` is scored, in a fresh container |
-| Leave processes running to interfere with scoring | Agent processes are stopped; scoring runs in another container |
+| Leave processes running to interfere with scoring | Agent processes are stopped, even during a fork bomb (D61); scoring runs in another container |
 | Tamper with `.git` to hide or fake changes | `.git` is ignored; changes are found by comparing against the host's pristine snapshot |
-| Hang or exhaust resources during the hidden tests | The 5-minute scoring limit and the process limit; unfinished tests count as failed |
+| Hang or exhaust resources during the hidden tests | The 5-minute scoring limit and the process limit; each test command kills what it left running; unfinished tests, and tests that cannot start, count as failed (D61) |
 
 ## 6. Scripted agents
 
@@ -216,7 +219,7 @@ The report lists each task's success fraction per agent, and the spread of task-
 
 An **infrastructure failure** is the sandbox or runtime failing outside the agent's control: a container that does not start, a container killed or lost mid-attempt, or a Docker error while scoring. Such errors are raised, not scored. Inspect retries the whole attempt in a new sandbox with the same seed, up to 2 times (`retry_on_error=2`). After 3 failures the sample stays an error: it is excluded from every statistic and counted in the infrastructure-failure rate. A run with more than 5% excluded attempts is invalid (`fail_on_error=0.05`), and `make report` refuses to present its numbers as results (D18).
 
-The agent's own outcomes are never infrastructure failures: a command that times out, runs out of memory or crashes inside its container, reaching the turn or time limit, or a scoring limit reached by slow or hanging code.
+The agent's own outcomes are never infrastructure failures: a command that times out, runs out of memory or crashes inside its container, reaching the turn or time limit, a scoring limit reached by slow or hanging code, killing its own processes (D60), filling the container's process limit, or making its repo unreadable (D61).
 
 An attempt whose changes equal the reference fix but fail the hidden tests is logged as a **task flake**, not an agent failure, and the task is investigated (D12).
 
