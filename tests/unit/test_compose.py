@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 from harness.eval import COMPOSE_TEMPLATE, evalh, limited_agent
+from harness.tasks import load_task
 from harness.testrun import AGENT_USER
 from scripts.validate_tasks import SANDBOX_FLAGS
 
@@ -115,6 +116,12 @@ def test_every_sample_uses_the_template(monkeypatch: pytest.MonkeyPatch) -> None
         assert (sample.sandbox.type, sample.sandbox.config) == ("docker", str(COMPOSE_TEMPLATE))
         assert sample.metadata is not None
         assert sample.metadata["image"] == f"evalh-task-{sample.id}:test"
+        # The report reads the level and language from the logs (R2).
+        t = load_task(str(sample.id))
+        assert (sample.metadata["difficulty"], sample.metadata["language"]) == (
+            t.difficulty,
+            t.language,
+        )
 
 
 @pytest.mark.docker

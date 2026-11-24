@@ -126,8 +126,14 @@ def evalh(
             Sample(
                 id=t.id,
                 input=_prompt(t.visible_command, t.instructions),
-                # `image` fills ${SAMPLE_METADATA_IMAGE} in the compose template.
-                metadata={"task_id": t.id, "image": build_task_image(t)},
+                # `image` fills ${SAMPLE_METADATA_IMAGE} in the compose template. The level and
+                # language are logged so the report breaks results down from the logs alone (R2).
+                metadata={
+                    "task_id": t.id,
+                    "image": build_task_image(t),
+                    "difficulty": t.difficulty,
+                    "language": t.language,
+                },
                 sandbox=SandboxEnvironmentSpec("docker", str(COMPOSE_TEMPLATE)),
             )
         )
