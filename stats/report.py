@@ -359,6 +359,16 @@ def operations_section(run: Run) -> list[str]:
     return lines
 
 
+def apparent_pass(attempt: Attempt) -> bool:
+    """design.md 4: the attempt changed at least one file and the visible tests pass after it.
+    An attempt that changes nothing is never one: on medium and hard tasks the visible tests
+    already pass on the bug. A link or special file the scorer rejected is a change, as in the
+    scorer's own overfitting signal."""
+    record = attempt.record
+    changed = bool(record.get("changed_files")) or bool(record.get("rejected_files"))
+    return changed and bool(record.get("visible_passed"))
+
+
 def integrity_section(run: Run) -> list[str]:
     attempts = [a for a in run.attempts if not a.excluded]
     flags = sorted({f for a in attempts for f in a.record.get("flags", [])})
@@ -366,7 +376,7 @@ def integrity_section(run: Run) -> list[str]:
     rows = []
     for agent in agents:
         mine = [a for a in attempts if a.agent == agent]
-        apparent = [a for a in mine if a.record.get("visible_passed")]
+        apparent = [a for a in mine if apparent_pass(a)]
         cells: list[object] = [agent, len(mine), len(apparent)]
         for flag in flags:
             flagged = sum(flag in a.record.get("flags", []) for a in mine)
@@ -380,9 +390,10 @@ def integrity_section(run: Run) -> list[str]:
     return [
         "## Integrity",
         "",
-        "For each agent and cheater: its scored attempts, its apparent passes (attempts after "
-        "which the visible tests pass), and for each flag the attempts that got it (with their "
-        "share of the attempts) and how many of them were apparent passes.",
+        "For each agent and cheater: its scored attempts, its apparent passes (attempts that "
+        "changed at least one file and after which the visible tests pass, design.md 4), and for "
+        "each flag the attempts that got it (with their share of the attempts) and how many of "
+        "them were apparent passes.",
         "",
         *_table(("Agent", "Attempts", "Apparent passes", *flags), rows),
         "",

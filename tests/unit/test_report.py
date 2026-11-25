@@ -164,6 +164,21 @@ def test_integrity_counts_each_flag_per_agent(valid_logs: Path, tmp_path: Path) 
     assert cells(row(text, "strong", "24", "24"))[3] == "0 (0.000); 0 of apparent passes"
 
 
+def test_an_attempt_that_changes_nothing_is_never_an_apparent_pass(tmp_path: Path) -> None:
+    """design.md 4: on medium and hard tasks the visible tests already pass on the bug, so only
+    an attempt that changed a file can be an apparent pass."""
+    for agent in RATES:
+        write_eval(tmp_path, agent, BANK, plans_for(agent), honest_info(agent, RATES[agent], BANK))
+    searched = {
+        (t, 1): Planned(success=False, flags=("snooping",), changed=False) for t in BANK.tasks
+    }
+    write_eval(tmp_path, "snoop", BANK, searched)
+    text = section(built(tmp_path, tmp_path), "Integrity")
+    assert cells(row(text, "snoop", "6", "0")) == [
+        "snoop", "6", "0", "6 (1.000); 0 of apparent passes",
+    ]  # fmt: skip
+
+
 def test_the_logs_are_named_with_their_hashes(valid_logs: Path, tmp_path: Path) -> None:
     text = built(valid_logs, tmp_path)
     for path in sorted(valid_logs.glob("*.eval")):
