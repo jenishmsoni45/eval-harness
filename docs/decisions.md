@@ -755,6 +755,13 @@ Every question asked during planning and building, the options considered, the a
 - **Effect on E6:** none on the outcome. A killed container is still retried as an infrastructure failure and never scored, because the scorer always reaches the agent's container first and raises. An agent that only uses `bash` may spend turns on tool errors before that happens, which costs time and does not change any record.
 - **Tests:** both kill tests check that the retry's error says the sandbox is not running. The E4-across-a-retry test uses the real scorer, so the retry comes from the scorer, as it would in the full run. An earlier version used a no-op scorer and passed only because a broken helper raised an `AttributeError`; fixed before review.
 
+### D80. One attempt of the full run retried after a test session removed its containers
+
+- **Recorded:** 2026-11-25, Phase 5, during the full run.
+- **What happened:** while the run was going, a `pytest` session ran from a second checkout of this repo. Its tests used no Docker, but `tests/conftest.py`'s session-end check force-removes every `evalh-*` and `inspect-evalh-*` container it finds, and it removed containers of the run's `delete-test` eval as its first attempts started. One attempt, `delete-test` on `queue-004`, epoch 1, failed in `docker compose up` ("No such container") and Inspect retried it once in a new sandbox (`retry_on_error`, design §8). Its final record is like the other 19 `delete-test` attempts: reward −1 with `protected_path`. No other attempt in the logs has a retry or an error, and none is excluded.
+- **Decision:** by the owner, the run is kept and not redone. The report's one "attempt retried after an infrastructure failure" is this attempt.
+- **Follow-up:** the session-end cleanup should remove only containers that appeared during its own session, so a test run can never break a concurrent eval. Until then, no test runs while `make eval` runs.
+
 ## Open questions
 
 None recorded yet.
