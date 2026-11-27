@@ -755,32 +755,40 @@ Every question asked during planning and building, the options considered, the a
 - **Effect on E6:** none on the outcome. A killed container is still retried as an infrastructure failure and never scored, because the scorer always reaches the agent's container first and raises. An agent that only uses `bash` may spend turns on tool errors before that happens, which costs time and does not change any record.
 - **Tests:** both kill tests check that the retry's error says the sandbox is not running. The E4-across-a-retry test uses the real scorer, so the retry comes from the scorer, as it would in the full run. An earlier version used a no-op scorer and passed only because a broken helper raised an `AttributeError`; fixed before review.
 
+### D80. One attempt of the full run retried after a test session removed its containers
+
+- **Recorded:** 2026-11-25, Phase 5, during the full run.
+- **What happened:** while the run was going, a `pytest` session ran from a second checkout of this repo. Its tests used no Docker, but `tests/conftest.py`'s session-end check force-removes every `evalh-*` and `inspect-evalh-*` container it finds, and it removed containers of the run's `delete-test` eval as its first attempts started. One attempt, `delete-test` on `queue-004`, epoch 1, failed in `docker compose up` ("No such container") and Inspect retried it once in a new sandbox (`retry_on_error`, design §8). Its final record is like the other 19 `delete-test` attempts: reward −1 with `protected_path`. No other attempt in the logs has a retry or an error, and none is excluded.
+- **Decision:** by the owner, the run is kept and not redone. The report's one "attempt retried after an infrastructure failure" is this attempt.
+- **Follow-up:** the session-end cleanup should remove only containers that appeared during its own session, so a test run can never break a concurrent eval. Until then, no test runs while `make eval` runs.
+
 ## Phase 6
 
-### D80. Phase 6 started before the Phase 5 pull request
+### D81. Phase 6 started before the Phase 5 pull request
 
 - **Asked:** 2026-11-25, while the Phase 5 full run was going.
 - **Options:** (a) build Phase 6 now on a branch taken from the Phase 5 branch, and open its pull request only once Phase 5 is merged; (b) the same, with a stacked pull request against the Phase 5 branch; (c) wait for the merge.
 - **Decision:** (a), by the owner. The branch `phase-6-rl-ship` starts from `phase-5-stats-run`, in a separate checkout, so the running eval's files are never touched. Once Phase 5 is merged, the branch is rebased onto `main` and the pull request is opened. No Docker test runs while the full run is going, because the report records each attempt's wall time.
+- **Change, 2026-11-27:** the owner then stopped the parallel work (D80) and Phase 6 waited for the merge. After it, `main` was merged into the branch instead of rebasing it, because the project's command guard forbids rewriting history, and the separate checkout was removed. The pull request's diff against `main` is the same either way.
 
-### D81. The RL environment's scripted policies
+### D82. The RL environment's scripted policies
 
 - **Asked:** 2026-11-25, Phase 6.
 - **Options:** (a) reuse the eval's scripted agents and cheaters through an adapter that turns each tool call into an environment action; (b) new policies written only for the environment.
 - **Decision:** (a). The adapter is in `harness/agents/`, so `rl/env.py` imports no agent code (R4). An honest policy's seed is the attempt seed: it picks the outcome with the same draw as in the eval (design §6), so the same seed always gives the same trajectory, and the trajectory is the one the eval would run.
 
-### D82. The postmortem's bug
+### D83. The postmortem's bug
 
 - **Asked:** 2026-11-25, Phase 6 (PLAN.md §9: a leak or a grading bug makes the best one).
 - **Options:** (a) D71, test results forged by the code under test; (b) D60, an agent could stop its own container; (c) D40, the visible run saw the hidden Go tests; (d) D79, an E6 test that passed by accident.
 - **Decision:** (a), a grading bug that gave full reward with no flag.
 
-### D83. The README section on how the project was built
+### D84. The README section on how the project was built
 
 - **Asked:** 2026-11-25, Phase 6 (PLAN.md §9's definition of done).
 - **Decision:** a short, factual draft from this log: one phase per pull request, the owner's reviews, the command guard, and how the work was verified. The owner rewrites it in review. Commit messages and pull-request text still never mention the tools used to write the code.
 
-### D84. How the RL environment runs commands in its containers
+### D85. How the RL environment runs commands in its containers
 
 - **Asked:** 2026-11-25, Phase 6 (architecture, RL episode).
 - **Context:** the environment runs outside Inspect but must call the same scorer, which uses only `exec`, `read_file` and `write_file`.
@@ -788,17 +796,18 @@ Every question asked during planning and building, the options considered, the a
 - **Decision:** (a). It follows Inspect's behaviour where the scorer depends on it: the in-container `timeout` (exit 124 or 137 raises `TimeoutError`), the user, parent directories created on write, and `FileNotFoundError`, `IsADirectoryError` and `PermissionError` on read.
 - **Why:** (b) depends on Inspect internals, which D25 avoided. Any difference from the eval is caught by P6-2's test that the environment's reward equals the eval scorer's for the same changes.
 
-### D85. Where the demo episode lives
+### D86. Where the demo episode lives
 
 - **Asked:** 2026-11-25, Phase 6.
 - **Context:** phases.md named `scripts/demo_episode.py`, but R4's import-boundary test forbids every module under `scripts/` to import the scripted agents, and the demo runs them.
 - **Options:** (a) `harness/agents/demo_episode.py`, run with `make demo`, as `make eval`'s driver is `harness/agents/run.py`; (b) exempt the script from the test; (c) policies written inside the script.
 - **Decision:** (a). phases.md's P6-3 and scope name the new path.
 
-### D86. Checks for the Phase 6 pull request
+### D87. Checks for the Phase 6 pull request
 
 - **Asked:** 2026-11-25, Phase 6.
 - **Decision:** as in D72 and D75, the head commit carries `[skip ci]`. Every check runs locally, and the pull request says amd64 is not verified. PLAN.md §9's "E1–E8 run in CI" stays open and is listed under Follow-ups.
+- **Change, 2026-11-27, by the owner:** to keep the Mac cool, local checks are the ones that run on the codebase directly (`make lint`, `make audit`, the tests that need no Docker, `make report`), plus only the narrowest Docker checks a change needs: the Docker tests of the changed code, and `make validate` only for changed tasks. The full Docker suite, validation of every task and a full eval are not run unless the owner asks. The pull request lists exactly what ran and what was skipped.
 
 ## Open questions
 

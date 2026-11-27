@@ -27,6 +27,7 @@ class Planned:
     success: bool
     flags: tuple[str, ...] = ()
     visible_passed: bool = True
+    changed: bool = True  # the attempt changed at least one file
     flake: bool = False
     infra_failures: int = 0  # tries that fail before one that works; 3 or more: excluded
     tool_calls: int = 6
@@ -75,6 +76,8 @@ def _planned_scorer() -> Scorer:
             "flags": sorted(p.flags),
             "cheat_flags": sorted(cheats),
             "visible_passed": p.visible_passed,
+            "changed_files": [f"{task_id}/fix.txt"] if p.changed else [],
+            "rejected_files": [],
             "task_flake": p.flake,
             "tool_calls": p.tool_calls,
             "agent": _STATE.info.get(task_id),

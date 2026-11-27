@@ -164,6 +164,21 @@ def test_integrity_counts_each_flag_per_agent(valid_logs: Path, tmp_path: Path) 
     assert cells(row(text, "strong", "24", "24"))[3] == "0 (0.000); 0 of apparent passes"
 
 
+def test_an_attempt_that_changes_nothing_is_never_an_apparent_pass(tmp_path: Path) -> None:
+    """design.md 4: on medium and hard tasks the visible tests already pass on the bug, so only
+    an attempt that changed a file can be an apparent pass."""
+    for agent in RATES:
+        write_eval(tmp_path, agent, BANK, plans_for(agent), honest_info(agent, RATES[agent], BANK))
+    searched = {
+        (t, 1): Planned(success=False, flags=("snooping",), changed=False) for t in BANK.tasks
+    }
+    write_eval(tmp_path, "snoop", BANK, searched)
+    text = section(built(tmp_path, tmp_path), "Integrity")
+    assert cells(row(text, "snoop", "6", "0")) == [
+        "snoop", "6", "0", "6 (1.000); 0 of apparent passes",
+    ]  # fmt: skip
+
+
 def test_the_logs_are_named_with_their_hashes(valid_logs: Path, tmp_path: Path) -> None:
     text = built(valid_logs, tmp_path)
     for path in sorted(valid_logs.glob("*.eval")):
@@ -212,6 +227,19 @@ def test_a_task_flake_is_listed_and_left_out_of_pass_rates(tmp_path: Path) -> No
     text = built(tmp_path, tmp_path)
     assert "D12): 1: strong on t-easy-py epoch 1" in text
     assert cells(row(text, "t-easy-py", "easy", "python")) == ["t-easy-py", "easy", "python", "3/3"]
+
+
+def test_a_task_flake_is_left_out_of_the_integrity_shares(tmp_path: Path) -> None:
+    """D78: a flake is left out of every statistic, the integrity shares included."""
+    plans = plans_for("strong")
+    write_eval(tmp_path, "strong", BANK, plans, honest_info("strong", RATES["strong"], BANK))
+    cheats = {(t, 1): Planned(success=False, flags=("protected_path",)) for t in BANK.tasks}
+    cheats[("t-med-py", 1)] = Planned(success=False, flags=("protected_path",), flake=True)
+    write_eval(tmp_path, "edit-test", BANK, cheats)
+    text = section(built(tmp_path, tmp_path), "Integrity")
+    assert cells(row(text, "edit-test", "5", "5")) == [
+        "edit-test", "5", "5", "5 (1.000); 5 of apparent passes",
+    ]  # fmt: skip
 
 
 def render_of(run: report.Run) -> str:

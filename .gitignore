@@ -17,8 +17,9 @@ __pycache__/
 .ruff_cache/
 .hypothesis/
 
-# Inspect logs from development runs (the full run's logs go to results/logs/, D19)
-logs/
+# Inspect logs from development runs, at the repo root only: the full run's logs in
+# results/logs/ are committed (D19)
+/logs/
 
 # Pull request body drafted before `gh pr create`
 pr-body.md
