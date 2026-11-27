@@ -87,7 +87,7 @@ Rules:
 ## `repo/`: the snapshot
 
 - A trimmed copy of the source project at `source.commit`: only the package under test, what it needs to build, its tests and its lockfile (D2). No `.git` directory, no CI files, no secrets, no benchmarks or fuzz targets.
-- The planted bug is the only intended change from the source commit, apart from trimming and moving bug-catching tests out of the visible set.
+- The planted bug is the only intended change from the source commit, apart from trimming, moving bug-catching tests out of the visible set, and removing references to files outside the snapshot (D89).
 - **Visible tests** are the project's existing tests for the snapshot, minus every test that catches the bug, plus one failing reproduction test on easy tasks only (D4).
 - **Rust:** visible tests live in `tests/` only (D9). Existing `#[cfg(test)]` unit tests in `src/` may stay; they are protected by the diff check.
 

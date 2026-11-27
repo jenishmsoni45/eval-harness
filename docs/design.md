@@ -288,7 +288,7 @@ An attempt whose changes equal the reference fix but fail the hidden tests is lo
 
 | Test | Proves | Invariant or requirement | Phase |
 |---|---|---|---|
-| `tests/unit/test_no_model.py` | The eval's model is `mockllm`; no provider API key is read; no hosted-model client is imported | `CLAUDE.md` hard limits | 1 |
+| `tests/unit/test_no_model.py` | The eval's model is `mockllm`; no provider API key is read; no hosted-model client is imported | Non-goals (requirements.md) | 1 |
 | `tests/unit/test_import_boundary.py` | No harness, stats or RL module imports `harness/agents/` | R4 | 1 |
 | `tests/unit/test_compose.py` | Every service has `network_mode: none` and every D21 limit | E2 (static), D21 | 1 |
 | `tests/unit/test_inspect_assumptions.py` | `store()` is readable from the `mockllm` callable; `text_editor` works offline; no `inspect-evalh-*` container remains after a sample | D27 | 1 |

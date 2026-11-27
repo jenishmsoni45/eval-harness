@@ -1,9 +1,8 @@
 # Local environment and secrets
 .env
 
-# Private working files (rough drafts, personal Claude Code settings)
+# Private working files
 .local/
-.claude/settings.local.json
 
 # OS
 .DS_Store

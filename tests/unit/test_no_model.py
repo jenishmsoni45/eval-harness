@@ -1,4 +1,4 @@
-"""No AI model is called anywhere (phases.md P1-4; CLAUDE.md hard limits).
+"""No AI model is called anywhere (phases.md P1-4; requirements.md non-goals).
 
 - No hosted-model SDK or local model runtime is in the locked environment, so none can run.
 - No source file imports one or reads a provider API key.

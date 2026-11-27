@@ -92,16 +92,16 @@ Each acceptance criterion is testable; the phase that delivers it is in [`phases
 | Per-attempt limits | Agent phase ≤ 10 minutes and ≤ 30 tool calls; scoring phase ≤ 5 minutes | D21, D27 |
 | Concurrency | 3 attempts at once, within Docker Desktop's cap | D20, D21 |
 | Sandbox isolation | `network_mode: none` on every service; non-root user; all capabilities dropped; `no-new-privileges`; no Docker socket; no host mounts | D21, D27 |
-| Cleanup | No `evalh-*` or `inspect-evalh-*` container remains after any command | D25, `CLAUDE.md` |
-| Host safety | Nothing is downloaded except pinned uv packages, digest-pinned official images, hash-locked installs inside an image while it builds, `make audit`'s lookup and read-only `gh` calls; once images are built, every run works with no internet; no container, process or volume outlives its command; nothing is installed on the Mac | D39, `CLAUDE.md` |
+| Cleanup | No `evalh-*` or `inspect-evalh-*` container remains after any command | D25 |
+| Host safety | Nothing is downloaded except pinned uv packages, digest-pinned official images, hash-locked installs inside an image while it builds, `make audit`'s lookup and read-only `gh` calls; once images are built, every run works with no internet; no container, process or volume outlives its command; nothing is installed on the Mac | D39 |
 | Validation | N = 5 runs per check; any flake rejects the task | D12 |
 | Retries | ≤ 2 retries per attempt with the same seed; > 5% excluded attempts makes a run invalid | D18 |
 | Statistical power | ≥ 80% power to separate the strong and mid agents at 20 tasks × 6 attempts, confirmed by `scripts/power_estimate.py` | D6, D8, D30 |
 | Reproducibility | Same code, seeds and logs give an identical report; every random draw is seeded | D5, D7 |
-| Dependencies | Well-known packages and official images only, pinned to exact versions (`uv.lock`, image digests); `make audit` passes | `CLAUDE.md` |
+| Dependencies | Well-known packages and official images only, pinned to exact versions (`uv.lock`, image digests); `make audit` passes | D39 |
 | Portability | Images build and run on arm64 (this Mac) and amd64 (CI) | D20 |
 | CI budget | Pull-request CI validates only the tasks a PR changes; a manual workflow validates all | D15 |
-| Cost | Free: no AI model, API key, paid service or cloud account | `CLAUDE.md` |
+| Cost | Free: no AI model, API key, paid service or cloud account | Non-goals |
 
 ## Non-goals
 
