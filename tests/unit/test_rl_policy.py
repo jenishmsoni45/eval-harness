@@ -7,21 +7,25 @@ same outcome as the eval's attempt with the same seed, so an episode replays an 
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import cache
 
 import pytest
-from inspect_ai.model import ModelOutput
+from inspect_ai.log import read_eval_log
+from inspect_ai.model import ChatMessageAssistant, ModelOutput
 
 from harness.agents import cheaters, honest
 from harness.agents.outcomes import AGENTS, Outcome, attempt_seed
 from harness.agents.rl_policy import (
     POLICIES,
     action_of,
+    action_of_call,
     honest_outcome,
     scripted_outputs,
     scripted_policy,
 )
 from harness.agents.scripted import Turn, submit, tool_call
-from rl.env import MAX_OUTPUT_BYTES, Create, Env, Replace, Run, Submit, View, _truncate
+from rl.env import MAX_OUTPUT_BYTES, Action, Create, Env, Replace, Run, Submit, View, _truncate
+from stats.report import LOG_DIR, SCORER
 
 TASK = "risk-001"
 MODEL = "mockllm/test"
@@ -109,3 +113,34 @@ def test_long_output_is_cut_to_inspects_tool_output_limit() -> None:
     cut = _truncate("é" * MAX_OUTPUT_BYTES)
     assert len(cut.split("\n")[0].encode()) <= MAX_OUTPUT_BYTES
     assert cut.endswith(f"[output truncated to {MAX_OUTPUT_BYTES} bytes]")
+
+
+@cache
+def logged_trajectories() -> list[tuple[str, str, int, int | None, list[Action]]]:
+    """Every attempt of the committed full run (D19): agent, task, epoch, seed, and the tool calls
+    it made, as actions."""
+    found = []
+    for path in sorted(LOG_DIR.glob("*.eval")):
+        log = read_eval_log(str(path))
+        agent = log.eval.model.removeprefix("mockllm/")
+        for sample in log.samples or []:
+            record = (sample.scores or {})[SCORER].metadata or {}
+            seed = (record.get("agent") or {}).get("seed")
+            calls = [
+                action_of_call(call)
+                for m in sample.messages
+                if isinstance(m, ChatMessageAssistant)
+                for call in m.tool_calls or []
+            ]
+            found.append((agent, str(sample.id), int(sample.epoch), seed, calls))
+    return found
+
+
+def test_every_logged_attempt_is_replayed_call_for_call() -> None:
+    """D82: a policy with an attempt's seed plays exactly the tool calls that attempt made in the
+    eval, for every attempt of the full run."""
+    attempts = logged_trajectories()
+    assert len(attempts) > 400
+    for agent, task_id, epoch, seed, calls in attempts:
+        policy = scripted_policy(agent, task_id, seed)
+        assert [policy("") for _ in calls] == calls, (agent, task_id, epoch)

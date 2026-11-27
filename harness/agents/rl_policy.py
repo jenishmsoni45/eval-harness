@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from inspect_ai.model import ModelOutput
+from inspect_ai.tool import ToolCall
 
 from harness.agents import cheaters, honest
 from harness.agents.outcomes import AGENTS, Outcome, draw, true_rate
@@ -32,7 +33,11 @@ def action_of(output: ModelOutput) -> Action:
     calls = output.message.tool_calls or []
     if len(calls) != 1:
         raise ValueError(f"a scripted output makes exactly one tool call, not {len(calls)}")
-    call = calls[0]
+    return action_of_call(calls[0])
+
+
+def action_of_call(call: ToolCall) -> Action:
+    """The environment action for one tool call, scripted or logged."""
     args = call.arguments
     if call.function == "bash":
         return Run(str(args["command"]))
