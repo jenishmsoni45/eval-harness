@@ -179,7 +179,7 @@ flowchart LR
 
 ```
 project-5-eval-harness/
-├── CLAUDE.md  PLAN.md  README.md  Makefile  pyproject.toml  uv.lock
+├── PLAN.md  README.md  Makefile  pyproject.toml  uv.lock
 ├── .github/   pull_request_template.md  workflows/ci.yml  workflows/validate-all.yml
 ├── docs/      requirements.md  architecture.md  design.md  task-spec.md  decisions.md  phases.md  postmortem.md
 ├── images/    python/Dockerfile  go/Dockerfile  rust/Dockerfile

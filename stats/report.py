@@ -22,8 +22,8 @@ For a valid run it gives:
 Output is deterministic: rows are sorted, numbers have a fixed format, the bootstrap seed is fixed
 here, and nothing depends on when the report is built (design.md 9).
 
-    python -m stats.report                       # results/logs/ -> results/reports/report.md
-    python -m stats.report --logs DIR --out FILE
+    python -m stats.report    # results/logs/ -> results/reports/report.md and README.md's block
+    python -m stats.report --logs DIR --out FILE --readme FILE
 """
 
 from __future__ import annotations
@@ -49,6 +49,10 @@ from stats.passk import mean_pass_at_k
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "results" / "logs"
 REPORT = ROOT / "results" / "reports" / "report.md"
+README = ROOT / "README.md"
+# The README's numbers sit between these markers, and only `make report` writes them (P6-4, R13).
+README_START = "<!-- report:start -->"
+README_END = "<!-- report:end -->"
 
 SCORER = "hidden_tests"  # the harness's scorer, whose metadata is the attempt's record
 BOOTSTRAP_SEED = 20261124  # design.md 9: fixed in the report's configuration
@@ -264,6 +268,80 @@ def comparison_words(first: str, second: str, low: float, high: float) -> str:
     return f"the data cannot tell {first} and {second} apart"
 
 
+@dataclass(frozen=True)
+class Calibration:
+    bank: float
+    population: float
+    mean: float
+    low: float
+    high: float
+
+    @property
+    def covers_bank(self) -> bool:
+        return self.low <= self.bank <= self.high
+
+    @property
+    def covers_population(self) -> bool:
+        return self.low <= self.population <= self.high
+
+
+def calibration(s: AgentStats) -> Calibration | None:
+    """design.md 7.5: the agent's pass@1 and interval against its bank and population rates,
+    from what it logged."""
+    tasks = s.tasks()
+    if not tasks or s.sigma is None:
+        return None
+    fr = s.fractions(tasks)
+    low, high = interval(fr)
+    mix = [sum(1 for t in tasks if s.difficulty[t] == lvl) for lvl in LEVELS]
+    rates = [s.level_rate.get(lvl, 0.5) for lvl in LEVELS]
+    return Calibration(
+        bank=bank_rate([s.true_rate[t] for t in tasks]),
+        population=population_rate(rates, mix, s.sigma),
+        mean=statistics.fmean(fr),
+        low=low,
+        high=high,
+    )
+
+
+@dataclass(frozen=True)
+class Paired:
+    first: str
+    second: str
+    tasks: int
+    mean: float
+    low: float
+    high: float
+
+    @property
+    def primary(self) -> bool:
+        return (self.first, self.second) == PRIMARY
+
+    @property
+    def words(self) -> str:
+        return comparison_words(self.first, self.second, self.low, self.high)
+
+
+def paired(agents: dict[str, AgentStats], names: Sequence[str]) -> list[Paired]:
+    """design.md 7.4: every pair over the tasks both have, the primary pair first."""
+    pairs = list(combinations(names, 2))
+    pairs.sort(key=lambda p: (p != PRIMARY, names.index(p[0]), names.index(p[1])))
+    out = []
+    for first, second in pairs:
+        common = sorted(set(agents[first].counts) & set(agents[second].counts))
+        if not common:
+            continue
+        d = [
+            a - b
+            for a, b in zip(
+                agents[first].fractions(common), agents[second].fractions(common), strict=True
+            )
+        ]
+        low, high = interval(d)
+        out.append(Paired(first, second, len(common), statistics.fmean(d), low, high))
+    return out
+
+
 # --- Rendering ----------------------------------------------------------------------------------
 
 
@@ -290,6 +368,13 @@ def _median(values: Sequence[float]) -> str:
     return _f(statistics.median(values)) if values else "n/a"
 
 
+def run_seconds(run: Run) -> float | None:
+    """From the first eval's start to the last eval's end."""
+    starts = [e.started for e in run.evals if e.started]
+    ends = [e.completed for e in run.evals if e.completed]
+    return (max(ends) - min(starts)).total_seconds() if starts and ends else None
+
+
 def logs_section(run: Run) -> list[str]:
     return [
         "## Logs",
@@ -310,8 +395,7 @@ def operations_section(run: Run) -> list[str]:
     retried = sum(1 for a in attempts if a.retries > 0 and not a.excluded)
     flakes = sorted((a.agent, a.task_id, a.epoch) for a in attempts if a.flake)
     rate = run.excluded / run.planned if run.planned else 0.0
-    starts = [e.started for e in run.evals if e.started]
-    ends = [e.completed for e in run.evals if e.completed]
+    total = run_seconds(run)
     lines = [
         "## Operations",
         "",
@@ -324,8 +408,7 @@ def operations_section(run: Run) -> list[str]:
         f"agent failures, D12): {len(flakes)}"
         + (": " + ", ".join(f"{a} on {t} epoch {e}" for a, t, e in flakes) if flakes else "."),
     ]
-    if starts and ends:
-        total = (max(ends) - min(starts)).total_seconds()
+    if total is not None:
         lines.append(f"- Total run time, from the first eval's start to the last eval's end: "
                      f"{_clock(total)}.")  # fmt: skip
     lines += [
@@ -466,35 +549,17 @@ def results_sections(run: Run) -> list[str]:
         "One agent is said to beat another only when the interval excludes zero.",
         "",
     ]
-    pairs = list(combinations(names, 2))
-    pairs.sort(key=lambda p: (p != PRIMARY, names.index(p[0]), names.index(p[1])))
-    rows = []
-    for first, second in pairs:
-        common = sorted(set(agents[first].counts) & set(agents[second].counts))
-        if not common:
-            continue
-        d = [
-            a - b
-            for a, b in zip(
-                agents[first].fractions(common), agents[second].fractions(common), strict=True
-            )
-        ]
-        low, high = interval(d)
-        role = (
-            "primary"
-            if (first, second) == PRIMARY
-            else "secondary, not adjusted for multiple comparisons"
+    rows = [
+        (
+            f"{p.first} vs {p.second}",
+            "primary" if p.primary else "secondary, not adjusted for multiple comparisons",
+            p.tasks,
+            _f(p.mean),
+            _ci(p.low, p.high),
+            p.words,
         )
-        rows.append(
-            (
-                f"{first} vs {second}",
-                role,
-                len(common),
-                _f(statistics.fmean(d)),
-                _ci(low, high),
-                comparison_words(first, second, low, high),
-            )
-        )
+        for p in paired(agents, names)
+    ]
     lines += [
         *_table(("Pair", "Comparison", "Tasks", "Difference", "95% interval", "Conclusion"), rows),
         "",
@@ -512,25 +577,18 @@ def results_sections(run: Run) -> list[str]:
     ]
     rows = []
     for n in names:
-        s = agents[n]
-        tasks = s.tasks()
-        if not tasks or s.sigma is None:
+        c = calibration(agents[n])
+        if c is None:
             continue
-        fr = s.fractions(tasks)
-        low, high = interval(fr)
-        mix = [sum(1 for t in tasks if s.difficulty[t] == lvl) for lvl in LEVELS]
-        rates = [s.level_rate.get(lvl, 0.5) for lvl in LEVELS]
-        pop = population_rate(rates, mix, s.sigma)
-        bank = bank_rate([s.true_rate[t] for t in tasks])
         rows.append(
             (
                 n,
-                _f(bank),
-                _f(pop),
-                _f(statistics.fmean(fr)),
-                _ci(low, high),
-                "yes" if low <= bank <= high else "no",
-                "yes" if low <= pop <= high else "no",
+                _f(c.bank),
+                _f(c.population),
+                _f(c.mean),
+                _ci(c.low, c.high),
+                "yes" if c.covers_bank else "no",
+                "yes" if c.covers_population else "no",
             )
         )
     lines += [
@@ -606,11 +664,110 @@ def render(run: Run) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def build(log_dir: Path, out: Path) -> bool:
+# --- The README's block (P6-4) --------------------------------------------------------------
+
+
+def readme_block(run: Run) -> str:
+    """The README's numbers, between its markers: the headline results of the full report."""
+    lines = [
+        README_START,
+        "",
+        "Written by `make report` from the full scripted run's logs in `results/logs/`; the "
+        "[full report](results/reports/report.md) has every breakdown.",
+        "",
+    ]
+    reasons = run.invalid_reasons()
+    if reasons:
+        lines += ["**The run is invalid, so no results are shown:**", ""]
+        lines += [*(f"- {r}" for r in reasons), "", README_END]
+        return "\n".join(lines)
+    attempts = run.attempts
+    names = honest_agents(attempts)
+    agents = {n: agent_stats(attempts, n) for n in names}
+    level_of = {a.task_id: a.difficulty for a in attempts if a.agent in names}
+    language_of = {a.task_id: a.language for a in attempts if a.agent in names}
+    by_level = ", ".join(f"{sum(v == lvl for v in level_of.values())} {lvl}" for lvl in LEVELS)
+    by_language = ", ".join(
+        f"{sum(v == lang for v in language_of.values())} {lang.capitalize()}" for lang in LANGUAGES
+    )
+    retried = sum(1 for a in attempts if a.retries > 0 and not a.excluded)
+    rate = run.excluded / run.planned if run.planned else 0.0
+    total = run_seconds(run)
+    lines += [
+        f"- **Tasks:** {len(level_of)} validated tasks: {by_level}; {by_language}.",
+        f"- **Run:** {run.planned} attempts planned and {len(attempts)} logged; {run.excluded} "
+        f"excluded after infrastructure failures ({_f(rate)}); {retried} "
+        "retried and then scored"
+        + (f"; total run time {_clock(total)}." if total is not None else "."),
+        "",
+        *_table(
+            (
+                "Agent",
+                "pass@1",
+                "95% interval",
+                "Bank rate",
+                "Interval covers it",
+                "Population rate",
+                "Interval covers it",
+            ),
+            (
+                (
+                    n,
+                    _f(c.mean),
+                    _ci(c.low, c.high),
+                    _f(c.bank),
+                    "yes" if c.covers_bank else "no",
+                    _f(c.population),
+                    "yes" if c.covers_population else "no",
+                )
+                for n in names
+                if (c := calibration(agents[n])) is not None
+            ),
+        ),
+        "",
+    ]
+    lines += [
+        f"- **{p.first} vs {p.second}** ({'primary' if p.primary else 'secondary'}): difference "
+        f"{_f(p.mean)}, 95% interval {_ci(p.low, p.high)}: {p.words}."
+        for p in paired(agents, names)
+    ]
+    scored = [a for a in attempts if a.scored]
+    honest = [a for a in scored if a.agent in names]
+    cheats = [a for a in scored if a.agent not in names]
+    cheated = sum(1 for a in cheats if a.record.get("flags"))
+    false_flags = sum(1 for a in honest if a.record.get("cheat_flags"))
+    apparent = [a for a in honest if apparent_pass(a)]
+    overfit = sum(1 for a in apparent if "visible_pass_hidden_fail" in a.record.get("flags", []))
+    wall = [a.wall_seconds for a in scored if a.wall_seconds is not None]
+    lines += [
+        f"- **Integrity:** {cheated} of {len(cheats)} scripted cheater attempts were flagged; "
+        f"{false_flags} of {len(honest)} honest attempts got a cheat flag; {overfit} of "
+        f"{len(apparent)} honest apparent passes carry the overfitting signal (visible tests "
+        "pass, hidden tests do not).",
+        f"- **Per attempt:** median {_median([float(a.record['tool_calls']) for a in scored])} "
+        f"tool calls and median {_median(wall)} seconds of wall time.",
+        "",
+        README_END,
+    ]
+    return "\n".join(lines)
+
+
+def write_readme(path: Path, block: str) -> None:
+    """Replace what lies between the README's markers, markers included, with the block."""
+    text = path.read_text()
+    start, end = text.find(README_START), text.find(README_END)
+    if start == -1 or end < start:
+        raise ValueError(f"{path} has no {README_START} ... {README_END} block")
+    path.write_text(text[:start] + block + text[end + len(README_END) :])
+
+
+def build(log_dir: Path, out: Path, readme: Path | None = None) -> bool:
     """Writes the report; True when the run is valid."""
     run = read_run(log_dir.glob("*.eval"))
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render(run))
+    if readme is not None:
+        write_readme(readme, readme_block(run))
     return not run.invalid_reasons()
 
 
@@ -618,11 +775,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--logs", type=Path, default=LOG_DIR)
     parser.add_argument("--out", type=Path, default=REPORT)
+    parser.add_argument(
+        "--readme",
+        type=Path,
+        default=None,
+        help="the README whose block to rewrite; by default README.md, and only for the "
+        "committed logs, so a report of other logs never touches it",
+    )
     args = parser.parse_args(argv)
     if not any(args.logs.glob("*.eval")):
         print(f"no logs in {args.logs}: nothing to report")
         return 2
-    valid = build(args.logs, args.out)
+    readme = args.readme
+    if readme is None and args.logs.resolve() == LOG_DIR.resolve():
+        readme = README
+    valid = build(args.logs, args.out, readme)
     print(f"wrote {args.out}" + ("" if valid else " (the run is invalid; no results presented)"))
     return 0 if valid else 1
 

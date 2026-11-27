@@ -57,7 +57,9 @@ When you are finished, call submit.
 """
 
 
-def _prompt(command: Sequence[str], instructions: str) -> str:
+def prompt(command: Sequence[str], instructions: str) -> str:
+    """The agent's first message: the fixed preamble, then the task's instructions. The RL
+    environment's first observation starts with the same text."""
     preamble = PREAMBLE.format(repo=REPO_DIR, command=f"cd {REPO_DIR} && {shlex.join(command)}")
     return f"{preamble}\n{instructions}"
 
@@ -126,7 +128,7 @@ def evalh(
         samples.append(
             Sample(
                 id=t.id,
-                input=_prompt(t.visible_command, t.instructions),
+                input=prompt(t.visible_command, t.instructions),
                 # `image` fills ${SAMPLE_METADATA_IMAGE} in the compose template. The level and
                 # language are logged so the report breaks results down from the logs alone (R2).
                 metadata={

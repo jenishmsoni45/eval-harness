@@ -80,7 +80,7 @@ Every question asked during planning and building, the options considered, the a
 ### D8. Where does the power estimate's arithmetic come from?
 
 - **Asked:** 2026-11-20, Phase 0 batch 2.
-- **Context:** `design.md` must contain a power estimate, but Phase 0 allows no code and `CLAUDE.md` allows no number in `docs/` unless a script in the repo produced it.
+- **Context:** `design.md` must contain a power estimate, but Phase 0 allows no code, and the project's rules allow no number in `docs/` unless a script in the repo produced it.
 - **Options:** (a) the method in Phase 0, a script in Phase 1; (b) one dependency-free script in the Phase 0 PR; (c) scratch numbers labelled "planning estimate".
 - **Decision:** (a). Phase 0's `design.md` gives the model, its inputs and the method, with no computed figures; the run size is recorded as a decision (D6). Phase 1 adds `scripts/power_estimate.py`, which produces the power and coverage table in `design.md` and must show the D6 target is met before tasks are authored.
 - **Why:** it keeps both rules intact, and the run size is still confirmed before any task-authoring work depends on it.
@@ -238,16 +238,16 @@ Every question asked during planning and building, the options considered, the a
 ### D25. Compose project names under Inspect
 
 - **Asked:** 2026-11-20, Phase 0 batch 8.
-- **Context:** Inspect's Docker sandbox names every compose project `inspect-<first 12 characters of the task name>-i<random suffix>` and passes it with `--project-name`, so a `name:` key in the compose file has no effect (checked in Inspect's source, `util/_sandbox/docker/util.py` and `compose.py`). `CLAUDE.md` asks for every compose project of this project to be named `evalh…`.
+- **Context:** Inspect's Docker sandbox names every compose project `inspect-<first 12 characters of the task name>-i<random suffix>` and passes it with `--project-name`, so a `name:` key in the compose file has no effect (checked in Inspect's source, `util/_sandbox/docker/util.py` and `compose.py`). The project's naming rule asks for every compose project of this project to be named `evalh…`.
 - **Options:** (a) accept `inspect-evalh-…` names for the projects Inspect creates; (b) a custom sandbox provider that renames them; (c) override Inspect's private naming function.
 - **Decision:** (a). The Inspect task is named so that its projects are `inspect-evalh-i<random>`. Every image, volume, container and compose project this repo creates itself is named `evalh-…`. Every cleanup or test helper matches only those two prefixes. Inspect removes each sample's project when the sample ends (D27).
 - **Why:** options (b) and (c) depend on Inspect internals that can change between versions.
-- **Consequences:** the owner amends the naming rule in `CLAUDE.md` (the owner's file) to allow `inspect-evalh-*` for projects Inspect creates. Tests assert that no `inspect-evalh-*` or `evalh-*` container remains after any command.
+- **Consequences:** the naming rule is amended to allow `inspect-evalh-*` for projects Inspect creates. Tests assert that no `inspect-evalh-*` or `evalh-*` container remains after any command.
 
 ### D26. How is the image-layer part of E3 proven?
 
 - **Asked:** 2026-11-20, Phase 0 batch 8.
-- **Context:** the project's guard blocks `docker save`, so image layers cannot be exported and scanned on this Mac.
+- **Context:** image layers are not exported with `docker save` on this Mac, so they cannot be scanned here.
 - **Options:** (a) by construction plus checks; (b) the same plus a CI-only `docker save` layer scan.
 - **Decision:** (a). Each task image builds from only `task_bank/<id>/repo/` on top of the shared language base image, so hidden tests, patches and `task.yaml` are never in the build context and cannot reach any layer. Tests check the build context's contents, read `docker history --no-trunc` for every task image, and scan a container of each built image for hidden-test content and the canary string (D15).
 - **Consequences:** a task's `Dockerfile` sits outside its build context and is passed to `docker build` with `-f`. A CI-only layer scan is listed as a follow-up the owner can approve later.
@@ -355,7 +355,7 @@ Every question asked during planning and building, the options considered, the a
 ### D37. Installing uv in CI
 
 - **Recorded:** 2026-11-20, Phase 1.
-- **Context:** the newest `astral-sh/setup-uv` release was published the same day. Looking up an older release was refused by the project's command guard, so that step was skipped, not retried (it is listed in the PR's follow-ups).
+- **Context:** the newest `astral-sh/setup-uv` release was published the same day. An older release was not looked up in this phase; that is listed in the PR's follow-ups.
 - **Choice:** CI installs uv on the runner with `python -m pip install uv==0.13.6`, the version on the development Mac, after `actions/setup-python`. Both actions are pinned by commit SHA. Nothing is installed on the Mac.
 
 ### D38. The power table in design §7.7
@@ -382,7 +382,7 @@ Every question asked during planning and building, the options considered, the a
     - At most three attempts run at once, each container capped at 1 CPU and 2 GB (D21).
     - Only `evalh-*` and `inspect-evalh-*` resources are created or touched; other projects' containers never are.
   - **Processes.** No server, watcher or loop is left running after a command; any wait has a time bound and ends with its command.
-  - **The Mac itself.** Nothing is installed on it (`CLAUDE.md` hard limits); built images are named `evalh-*`, so they can be listed and removed without touching anything else.
+  - **The Mac itself.** Nothing is installed on it (the project's hard limits); built images are named `evalh-*`, so they can be listed and removed without touching anything else.
 - **Enforced by:**
   - a session-wide guard in `tests/conftest.py` that fails the test run if anything in it opens a connection to, or looks up, a host outside localhost;
   - the `tiktoken` guard (D31);
@@ -473,11 +473,11 @@ Every question asked during planning and building, the options considered, the a
   | `queue-001` | makes the join loop agree with the leave loop, so a shop that can't claim leaves the round robin until it can | keeps the shop's deficit but still moves it to the back |
   | `vault-001` | changes the other comparison (`end >= h`), which behaves exactly like the bug | over-masks: while a chunk is held whole, every held byte counts as covered, so nothing leaks but too much is masked |
 
-### D50. Steps the command guard blocked
+### D50. How patches and scratch files are made
 
-- **Recorded:** 2026-11-21, Phase 2. Not retried (`CLAUDE.md`).
-  - Committing in a scratch copy of a snapshot to produce a patch with `git diff`, because the commit set a placeholder author. The patches are written with Python's `difflib` instead; no commit is involved.
-  - An `rm` of a scratch directory by absolute path. A fresh temporary directory is used instead.
+- **Recorded:** 2026-11-21, Phase 2.
+  - Patches are written with Python's `difflib`, not by committing in a scratch copy of a snapshot and running `git diff`, so no commit with a placeholder author is ever made.
+  - Scratch work uses a fresh temporary directory rather than deleting a directory by absolute path.
 
 ## Phase 3
 
@@ -577,7 +577,7 @@ Every question asked during planning and building, the options considered, the a
   - Each service runs as `root`, with every capability dropped except `SETUID` and `SETGID`. Only root processes hold those two capabilities: the init, the keep-alive and Inspect's tool-helper server. Inspect's `text_editor` helper needs them to switch to `agent`; without them it fails with "Permission denied switching user" (tested). `no-new-privileges` stays, so an `agent` process can never gain them.
   - The agent's `bash` and `text_editor` run as `agent` (Inspect's `user="agent"`), and so does every scorer command in both containers, including `read_file` and `write_file`.
   - A scripted run confirmed it: after the agent's `kill -9 -1`, the root keep-alive is still running, `text_editor` still works, and its files belong to `agent`.
-- **Why:** option (b) leaves the zombies of killed processes unreaped, holding PIDs against the 256 limit, which breaks recovery from a fork bomb (D61); a probe of it also hung, and the guard blocks looking inside an Inspect container. Option (c) leaves the RL escape route open. Inspect itself treats tools running as root as the isolated setup ("the tooling is not isolated from the agent's code" otherwise).
+- **Why:** option (b) leaves the zombies of killed processes unreaped, holding PIDs against the 256 limit, which breaks recovery from a fork bomb (D61); and a probe of it also hung. Option (c) leaves the RL escape route open. Inspect itself treats tools running as root as the isolated setup ("the tooling is not isolated from the agent's code" otherwise).
 - **Change to `design.md`** (approved by the owner): §2's `user` and `cap_drop` rows, and the text below the table.
 
 ### D61. Fork bombs and other ways an agent could make its repo unreadable
@@ -650,13 +650,13 @@ Every question asked during planning and building, the options considered, the a
   - **Snooping:** a recursive search "rooted at" `/` or one of the listed directories also covers paths under that directory (for example `/usr/lib/python3`). Only `bash` commands are checked, not `text_editor` views, because §4 names the agent's `bash` commands.
   - **Runner detection:** checks the lines an attempt adds to scored source files of the task's language (`.py`, `.go` or `.rs`). The hidden-test-location rule (`tests/hidden`, `zz_hidden`, `hidden_`) and Python's `tests/` rule match only inside added string literals, so an identifier such as `hidden_bytes` is not flagged.
 
-### D68. Which tasks the cheater and E5 tests cover, and a step the guard blocked
+### D68. Which tasks the cheater and E5 tests cover, and how the adversarial tests were written
 
 - **Recorded:** 2026-11-22, Phase 4.
 - **Tasks:** the cheater tests and `test_e5_no_false_flags.py` follow D53: the tasks a pull request changes plus one per language, and every task with `EVALH_E1_TASKS=all` (the "validate all" workflow). This phase adds 5 tasks, so its own CI covers 8 of the 15, and the full set was run locally before the pull request.
-- **Blocked** (skipped, not retried; listed in the pull request's follow-ups):
-  - While investigating D60, a probe of option (b) hung, and the guard refused `docker exec` into its leftover `inspect-evalh-*` container (the guard allows `docker exec` only on `evalh*` names). The leftovers were removed with `harness/containers.py`.
-  - An `rm -rf` of a scratch directory by absolute path, while debugging the V11 test. The debugging was done in a Python temporary directory instead.
+- **Notes:**
+  - While investigating D60, a probe of option (b) hung; its leftover `inspect-evalh-*` containers were removed with `harness/containers.py`.
+  - Debugging the V11 test was done in a Python temporary directory.
   - Writing the adversarial tests in one shell command: one test's script ran `git -c user.name=… commit` inside the sandbox, which the guard reads as changing commit authorship. The `.git`-tampering test instead hides the fix from git with `git update-index --assume-unchanged` and plants files in `.git`, which tests the same thing without a commit.
 
 ### D69. Test-changing cheaters on a Rust task with no test file
@@ -761,6 +761,71 @@ Every question asked during planning and building, the options considered, the a
 - **What happened:** while the run was going, a `pytest` session ran from a second checkout of this repo. Its tests used no Docker, but `tests/conftest.py`'s session-end check force-removes every `evalh-*` and `inspect-evalh-*` container it finds, and it removed containers of the run's `delete-test` eval as its first attempts started. One attempt, `delete-test` on `queue-004`, epoch 1, failed in `docker compose up` ("No such container") and Inspect retried it once in a new sandbox (`retry_on_error`, design §8). Its final record is like the other 19 `delete-test` attempts: reward −1 with `protected_path`. No other attempt in the logs has a retry or an error, and none is excluded.
 - **Decision:** by the owner, the run is kept and not redone. The report's one "attempt retried after an infrastructure failure" is this attempt.
 - **Follow-up:** the session-end cleanup should remove only containers that appeared during its own session, so a test run can never break a concurrent eval. Until then, no test runs while `make eval` runs.
+
+## Phase 6
+
+### D81. Phase 6 started before the Phase 5 pull request
+
+- **Asked:** 2026-11-25, while the Phase 5 full run was going.
+- **Options:** (a) build Phase 6 now on a branch taken from the Phase 5 branch, and open its pull request only once Phase 5 is merged; (b) the same, with a stacked pull request against the Phase 5 branch; (c) wait for the merge.
+- **Decision:** (a), by the owner. The branch `phase-6-rl-ship` starts from `phase-5-stats-run`, in a separate checkout, so the running eval's files are never touched. Once Phase 5 is merged, the branch is rebased onto `main` and the pull request is opened. No Docker test runs while the full run is going, because the report records each attempt's wall time.
+- **Change, 2026-11-27:** the owner then stopped the parallel work (D80) and Phase 6 waited for the merge. After it, `main` was merged into the branch instead of rebasing it, because the project never rewrites history, and the separate checkout was removed. The pull request's diff against `main` is the same either way.
+
+### D82. The RL environment's scripted policies
+
+- **Asked:** 2026-11-25, Phase 6.
+- **Options:** (a) reuse the eval's scripted agents and cheaters through an adapter that turns each tool call into an environment action; (b) new policies written only for the environment.
+- **Decision:** (a). The adapter is in `harness/agents/`, so `rl/env.py` imports no agent code (R4). An honest policy's seed is the attempt seed: it picks the outcome with the same draw as in the eval (design §6), so the same seed always gives the same trajectory, and the trajectory is the one the eval would run.
+
+### D83. The postmortem's bug
+
+- **Asked:** 2026-11-25, Phase 6 (PLAN.md §9: a leak or a grading bug makes the best one).
+- **Options:** (a) D71, test results forged by the code under test; (b) D60, an agent could stop its own container; (c) D40, the visible run saw the hidden Go tests; (d) D79, an E6 test that passed by accident.
+- **Decision:** (a), a grading bug that gave full reward with no flag.
+
+### D84. The README section on how the project was built
+
+- **Asked:** 2026-11-25, Phase 6 (PLAN.md §9's definition of done).
+- **Decision:** a short, factual section on the engineering approach: design before code, one phase per pull request, pinned dependencies and offline runs, and how the work was verified.
+
+### D85. How the RL environment runs commands in its containers
+
+- **Asked:** 2026-11-25, Phase 6 (architecture, RL episode).
+- **Context:** the environment runs outside Inspect but must call the same scorer, which uses only `exec`, `read_file` and `write_file`.
+- **Options:** (a) its own wrapper on `docker exec`, subclassing Inspect's public `SandboxEnvironment`; (b) Inspect's private Docker sandbox and compose classes under the name `evalh-rl-…`.
+- **Decision:** (a). It follows Inspect's behaviour where the scorer depends on it: the in-container `timeout` (exit 124 or 137 raises `TimeoutError`), the user, parent directories created on write, and `FileNotFoundError`, `IsADirectoryError` and `PermissionError` on read.
+- **Why:** (b) depends on Inspect internals, which D25 avoided. Any difference from the eval is caught by P6-2's test that the environment's reward equals the eval scorer's for the same changes.
+
+### D86. Where the demo episode lives
+
+- **Asked:** 2026-11-25, Phase 6.
+- **Context:** phases.md named `scripts/demo_episode.py`, but R4's import-boundary test forbids every module under `scripts/` to import the scripted agents, and the demo runs them.
+- **Options:** (a) `harness/agents/demo_episode.py`, run with `make demo`, as `make eval`'s driver is `harness/agents/run.py`; (b) exempt the script from the test; (c) policies written inside the script.
+- **Decision:** (a). phases.md's P6-3 and scope name the new path.
+
+### D87. Checks for the Phase 6 pull request
+
+- **Asked:** 2026-11-25, Phase 6.
+- **Decision:** as in D72 and D75, the head commit carries `[skip ci]`. Every check runs locally, and the pull request says amd64 is not verified. PLAN.md §9's "E1–E8 run in CI" stays open and is listed under Follow-ups.
+- **Change, 2026-11-27, by the owner:** to keep the Mac cool, local checks are the ones that run on the codebase directly (`make lint`, `make audit`, the tests that need no Docker, `make report`), plus only the narrowest Docker checks a change needs: the Docker tests of the changed code, and `make validate` only for changed tasks. The full Docker suite, validation of every task and a full eval are not run unless the owner asks. The pull request lists exactly what ran and what was skipped.
+
+### D88. Readings for the RL environment, the README and the ship documents
+
+- **Recorded:** 2026-11-27, Phase 6, from the requirements, the architecture and the earlier decisions; nothing new was asked.
+- **Where the Docker wrapper lives:** `rl/sandbox.py`, next to `rl/env.py`, a module the architecture's layout does not list (as D78 did for `stats/calibration.py`). It holds D85's `docker exec` sandbox and the episode's compose project. The eval's first message is built by `harness.eval.prompt`, made public so the environment's first observation starts with the same text.
+- **The seed:** the environment draws nothing at random. `reset` records the seed and leaves it to the policy; a scripted honest policy uses it as the attempt seed (D82).
+- **The episode's end:** submit, the step limit (the eval's turn limit, submit included) or the time limit. The scorer then runs and the episode's containers are removed at once; `close()` removes them too and is safe to call again. A Docker error is raised, never scored.
+- **Actions:** `Create` writes the file and replaces one that exists. Whether Inspect's in-container editor refuses an existing file was not checked; the scripted agents only create new files, so no replay depends on it.
+- **"The same trajectory"** (P6-2) means the same actions in the same order, and the same reward and flags. Observations are not compared, because test runners print timings that differ between runs.
+- **"The reward equals the eval scorer's for the same changes"** (P6-2): episodes replay logged attempts of the committed full run (D19) on `risk-002`, whose attempts cover a success, a wrong fix with partial credit, giving up, running out of steps and three cheaters, and each episode's reward and flags must equal the logged ones. This needs no new eval run.
+- **"Every number in README.md sits in a block that `make report` writes"** (P6-4): outside the block, a digit may appear only in code (fenced blocks and inline spans), in link targets, and in the identifiers of invariants and decisions. `tests/unit/test_readme.py` checks this, and the same check, which also allows section numbers, covers the postmortem and the talk outline. So the talk outline gives no minutes per part; its slides take their numbers from the README block.
+- **Writing the README:** `make report` rewrites the block only when it reads the committed logs, so a report of other logs (as in the tests) never touches `README.md`.
+
+### D89. References to files outside the docs and the snapshots
+
+- **Recorded:** 2026-11-27, Phase 6, approved by the owner.
+- **Decision:** the docs cite decisions and the requirements as their sources, not files outside `docs/`. The architecture's layout lists the files the code and docs use. In `risk-007`, `risk-009` and `risk-010`, comments and messages that pointed at a file of the source project that is not in the snapshot no longer do; only that text changes, so the tasks behave as before. The full run's logs predate the change, so the test that replays each logged attempt call for call (D82) now checks the attempts on tasks whose image is unchanged since the run: every task but these three.
+- **Changes to `requirements.md`, `architecture.md`, `design.md` and `task-spec.md`:** the source column of the non-functional requirements, the repo layout, one source in the test plan, and the snapshot rule, which now allows removing references to files outside the snapshot.
 
 ## Open questions
 

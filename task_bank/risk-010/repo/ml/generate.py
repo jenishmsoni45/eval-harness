@@ -1,5 +1,5 @@
 """A seeded generator of PaySim-format rows (D37), so CI can replay, profile and check parity
-without the real CSV, which is never committed (CLAUDE.md).
+without the real CSV, which is never committed.
 
 The rows have PaySim's columns and types, in step order, with accounts that repeat so every
 feature family has members, and with PaySim's fraud pattern planted: a TRANSFER from a victim to a

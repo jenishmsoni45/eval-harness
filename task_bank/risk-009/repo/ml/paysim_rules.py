@@ -281,7 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--report-out", type=Path, default=REPORT)
     args = parser.parse_args(argv)
     if not args.csv.is_file():
-        print(f"{args.csv} doesn't exist: put the PaySim CSV in data/ (CLAUDE.md)")
+        print(f"{args.csv} doesn't exist: put the PaySim CSV in data/")
         return 2
     try:
         factor = build(args.csv, args.rules_out, args.report_out)
