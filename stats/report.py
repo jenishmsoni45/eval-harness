@@ -370,7 +370,8 @@ def apparent_pass(attempt: Attempt) -> bool:
 
 
 def integrity_section(run: Run) -> list[str]:
-    attempts = [a for a in run.attempts if not a.excluded]
+    # Scored attempts only: a task flake is left out of every statistic (D78), as here.
+    attempts = [a for a in run.attempts if a.scored]
     flags = sorted({f for a in attempts for f in a.record.get("flags", [])})
     agents = [e.agent for e in run.evals]
     rows = []

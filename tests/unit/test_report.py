@@ -229,6 +229,19 @@ def test_a_task_flake_is_listed_and_left_out_of_pass_rates(tmp_path: Path) -> No
     assert cells(row(text, "t-easy-py", "easy", "python")) == ["t-easy-py", "easy", "python", "3/3"]
 
 
+def test_a_task_flake_is_left_out_of_the_integrity_shares(tmp_path: Path) -> None:
+    """D78: a flake is left out of every statistic, the integrity shares included."""
+    plans = plans_for("strong")
+    write_eval(tmp_path, "strong", BANK, plans, honest_info("strong", RATES["strong"], BANK))
+    cheats = {(t, 1): Planned(success=False, flags=("protected_path",)) for t in BANK.tasks}
+    cheats[("t-med-py", 1)] = Planned(success=False, flags=("protected_path",), flake=True)
+    write_eval(tmp_path, "edit-test", BANK, cheats)
+    text = section(built(tmp_path, tmp_path), "Integrity")
+    assert cells(row(text, "edit-test", "5", "5")) == [
+        "edit-test", "5", "5", "5 (1.000); 5 of apparent passes",
+    ]  # fmt: skip
+
+
 def render_of(run: report.Run) -> str:
     return report.render(run)
 
