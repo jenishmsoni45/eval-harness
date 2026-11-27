@@ -337,7 +337,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=REPORT)
     args = parser.parse_args(argv)
     if not args.csv.is_file():
-        print(f"{args.csv} doesn't exist: put the PaySim CSV in data/ (CLAUDE.md)")
+        print(f"{args.csv} doesn't exist: put the PaySim CSV in data/")
         return 2
     ok = profile(args.csv, args.out)
     print(f"wrote {args.out}" + ("" if ok else "; the loader refuses this file, see the report"))

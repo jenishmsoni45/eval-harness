@@ -24,6 +24,8 @@ from harness.agents.rl_policy import (
     scripted_policy,
 )
 from harness.agents.scripted import Turn, submit, tool_call
+from harness.images import task_image_tag
+from harness.tasks import load_task
 from rl.env import MAX_OUTPUT_BYTES, Action, Create, Env, Replace, Run, Submit, View, _truncate
 from stats.report import LOG_DIR, SCORER
 
@@ -116,9 +118,9 @@ def test_long_output_is_cut_to_inspects_tool_output_limit() -> None:
 
 
 @cache
-def logged_trajectories() -> list[tuple[str, str, int, int | None, list[Action]]]:
-    """Every attempt of the committed full run (D19): agent, task, epoch, seed, and the tool calls
-    it made, as actions."""
+def logged_trajectories() -> list[tuple[str, str, int, int | None, str, list[Action]]]:
+    """Every attempt of the committed full run (D19): agent, task, epoch, seed, the task image it
+    ran on, and the tool calls it made, as actions."""
     found = []
     for path in sorted(LOG_DIR.glob("*.eval")):
         log = read_eval_log(str(path))
@@ -126,21 +128,26 @@ def logged_trajectories() -> list[tuple[str, str, int, int | None, list[Action]]
         for sample in log.samples or []:
             record = (sample.scores or {})[SCORER].metadata or {}
             seed = (record.get("agent") or {}).get("seed")
+            image = str((sample.metadata or {}).get("image"))
             calls = [
                 action_of_call(call)
                 for m in sample.messages
                 if isinstance(m, ChatMessageAssistant)
                 for call in m.tool_calls or []
             ]
-            found.append((agent, str(sample.id), int(sample.epoch), seed, calls))
+            found.append((agent, str(sample.id), int(sample.epoch), seed, image, calls))
     return found
 
 
 def test_every_logged_attempt_is_replayed_call_for_call() -> None:
     """D82: a policy with an attempt's seed plays exactly the tool calls that attempt made in the
-    eval, for every attempt of the full run."""
+    eval. Checked for every attempt of the full run whose task is unchanged since the run, that is
+    whose task image has the same content hash as then (D89)."""
     attempts = logged_trajectories()
     assert len(attempts) > 400
-    for agent, task_id, epoch, seed, calls in attempts:
+    current = {t: task_image_tag(load_task(t)) for t in {a[1] for a in attempts}}
+    unchanged = [a for a in attempts if a[4] == current[a[1]]]
+    assert len({a[1] for a in unchanged}) >= len(current) - 3, "most tasks are as they were run"
+    for agent, task_id, epoch, seed, _, calls in unchanged:
         policy = scripted_policy(agent, task_id, seed)
         assert [policy("") for _ in calls] == calls, (agent, task_id, epoch)
