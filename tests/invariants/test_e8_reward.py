@@ -12,6 +12,7 @@ protected-path drop is `protected_changes` and `Changes.without`, as in `score_a
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from fractions import Fraction
 
 from hypothesis import given
@@ -161,8 +162,12 @@ def changed_repos(draw: st.DrawFn) -> tuple[Task, dict[str, bytes], dict[str, by
         if path in pristine and draw(st.booleans()):
             del cheating[path]
         else:
-            cheating[path] = draw(content.filter(lambda b, p=path: b != pristine.get(p)))
+            cheating[path] = draw(content.filter(differs_from(pristine.get(path))))
     return task, honest, cheating
+
+
+def differs_from(old: bytes | None) -> Callable[[bytes], bool]:
+    return lambda data: data != old
 
 
 def scorer_view(task: Task, repo: dict[str, bytes]) -> tuple[Changes, list[str]]:
