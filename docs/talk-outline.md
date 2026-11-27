@@ -54,7 +54,7 @@ A twenty-minute talk for research engineers, in eight parts. Every number on a s
 - Scripted agents measure the harness, not any model; the next step is plugging in a real model.
 - Known limits: the finish hook can be defeated by code that hunts for its token; detection rules are pattern lists.
 - Follow-ups: a separate test process, the Docker tests in CI on `amd64`, a larger bank.
-- How it was built: planned first, one reviewed pull request per phase, a command guard, every number rebuilt from logs.
+- How it was built: designed before coding, one pull request per phase with tested acceptance criteria, pinned and offline, every number rebuilt from logs.
 
 ## Questions to be ready for
 

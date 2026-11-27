@@ -90,14 +90,12 @@ The scripted agents and cheaters also run as policies (`harness.agents.rl_policy
 - Runner detection and snooping are pattern lists, so an obfuscated variant can evade them ([design](docs/design.md)).
 - The Docker tests ran locally on `arm64` only. They have not run on `amd64` in CI (D72, D75, D87).
 
-## How it was built
+## Engineering approach
 
-I built this harness with Claude Code, working under my plan and review.
-
-- **Plan first.** Before any code, the requirements, architecture, design, task spec and phase plan were written, and every open question was put to me with options, trade-offs and a recommendation. Every question and answer is in [docs/decisions.md](docs/decisions.md).
-- **One phase, one pull request.** Each phase had testable acceptance criteria. Each pull request maps every criterion to the code and the test that proves it and reports its own self-review; I reviewed and merged each one.
-- **A command guard.** A hook checked every shell command before it ran: no pushes to the main branch, no merges, no history rewriting, no installs, no downloads beyond pinned dependencies and images, and no Docker resources outside this project's `evalh` names. Every decision went to an audit log, and a blocked step was skipped and reported, never worked around.
-- **Verification.** The invariants are tests; every task passes validation before it is used; scripted agents with known rates check the statistics end to end; and every published number is rebuilt from committed logs. Self-reviews found real bugs before review, among them test results forged by the code under test (D71) and a fault-injection test that passed by accident (D79).
+- **Design before code.** I wrote the requirements, architecture, design, task spec and phase plan before writing any code. Every design question, the options I weighed and the choice I made are recorded in [docs/decisions.md](docs/decisions.md).
+- **One phase, one pull request.** Each phase has testable acceptance criteria. Each pull request maps every criterion to the code and the test that proves it, and includes a self-review of the full diff.
+- **Local, pinned and clean.** Dependencies are pinned in the lockfile and the base images by digest, and `make audit` checks the locked versions for known vulnerabilities. Once the images are built, everything runs offline. Nothing is installed on the host, and every container is named `evalh-*` and removed when its command ends.
+- **Verification.** The invariants are tests. Every task passes validation before it is used. Scripted agents with known rates check the statistics end to end, and every published number is rebuilt from committed logs. Adversarial tests and self-reviews caught real bugs before they could affect a result, among them test results forged by the code under test ([postmortem](docs/postmortem.md), D71) and a fault-injection test that passed by accident (D79).
 
 ## Documentation
 
