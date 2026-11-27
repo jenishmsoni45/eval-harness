@@ -809,6 +809,18 @@ Every question asked during planning and building, the options considered, the a
 - **Decision:** as in D72 and D75, the head commit carries `[skip ci]`. Every check runs locally, and the pull request says amd64 is not verified. PLAN.md §9's "E1–E8 run in CI" stays open and is listed under Follow-ups.
 - **Change, 2026-11-27, by the owner:** to keep the Mac cool, local checks are the ones that run on the codebase directly (`make lint`, `make audit`, the tests that need no Docker, `make report`), plus only the narrowest Docker checks a change needs: the Docker tests of the changed code, and `make validate` only for changed tasks. The full Docker suite, validation of every task and a full eval are not run unless the owner asks. The pull request lists exactly what ran and what was skipped.
 
+### D88. Readings for the RL environment, the README and the ship documents
+
+- **Recorded:** 2026-11-27, Phase 6, from the requirements, the architecture and the earlier decisions; nothing new was asked.
+- **Where the Docker wrapper lives:** `rl/sandbox.py`, next to `rl/env.py`, a module the architecture's layout does not list (as D78 did for `stats/calibration.py`). It holds D85's `docker exec` sandbox and the episode's compose project. The eval's first message is built by `harness.eval.prompt`, made public so the environment's first observation starts with the same text.
+- **The seed:** the environment draws nothing at random. `reset` records the seed and leaves it to the policy; a scripted honest policy uses it as the attempt seed (D82).
+- **The episode's end:** submit, the step limit (the eval's turn limit, submit included) or the time limit. The scorer then runs and the episode's containers are removed at once; `close()` removes them too and is safe to call again. A Docker error is raised, never scored.
+- **Actions:** `Create` writes the file and replaces one that exists. Whether Inspect's in-container editor refuses an existing file was not checked; the scripted agents only create new files, so no replay depends on it.
+- **"The same trajectory"** (P6-2) means the same actions in the same order, and the same reward and flags. Observations are not compared, because test runners print timings that differ between runs.
+- **"The reward equals the eval scorer's for the same changes"** (P6-2): episodes replay logged attempts of the committed full run (D19) on `risk-002`, whose attempts cover a success, a wrong fix with partial credit, giving up, running out of steps and three cheaters, and each episode's reward and flags must equal the logged ones. This needs no new eval run.
+- **"Every number in README.md sits in a block that `make report` writes"** (P6-4): outside the block, a digit may appear only in code (fenced blocks and inline spans), in link targets, and in the identifiers of invariants and decisions. `tests/unit/test_readme.py` checks this, and the same check, which also allows section numbers, covers the postmortem and the talk outline. So the talk outline gives no minutes per part; its slides take their numbers from the README block.
+- **Writing the README:** `make report` rewrites the block only when it reads the committed logs, so a report of other logs (as in the tests) never touches `README.md`.
+
 ## Open questions
 
 None recorded yet.
