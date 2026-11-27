@@ -241,10 +241,10 @@ class Env:
             return f"Error: {type(e).__name__}: {path}"
 
     async def _view(self, box: DockerExecSandbox, path: str) -> str:
-        listing = await box.exec(
-            ["find", path, "-maxdepth", "2", "-not", "-path", "*/.*"], user=AGENT_USER
-        )
-        if listing.success and listing.stdout.strip() != path:
+        if (await box.exec(["test", "-d", path], user=AGENT_USER)).success:
+            listing = await box.exec(
+                ["find", path, "-maxdepth", "2", "-not", "-path", "*/.*"], user=AGENT_USER
+            )
             entries = sorted(listing.stdout.splitlines())
             return f"Files and directories up to 2 levels deep in {path}:\n" + "\n".join(entries)
         text = await box.read_file(path, user=AGENT_USER)

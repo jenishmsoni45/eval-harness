@@ -118,6 +118,9 @@ def test_step_handles_every_action_type(env: Env) -> None:
         assert out.observation == "Error: FileNotFoundError: /work/repo/no/such/file.py"
         out = env.step(Run("cat notes/todo.txt"))
         assert out.observation == "first line\n2nd line\n"
+        env.step(Create(".hidden-note", "dot\n"))
+        out = env.step(View("/work/repo/.hidden-note"))
+        assert out.observation.endswith("     1\tdot\n     2\t")
 
         out = env.step(Submit())
         # A note that fixes nothing: no bug test passes, nothing is flagged.
