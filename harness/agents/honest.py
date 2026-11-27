@@ -25,7 +25,7 @@ from functools import cache
 from inspect_ai.model import Model, ModelOutput
 from inspect_ai.util import store
 
-from harness.agents.outcomes import AGENTS, Outcome, attempt_seed, draw, true_rate
+from harness.agents.outcomes import AGENTS, RATES, SIGMA, Outcome, attempt_seed, draw, true_rate
 from harness.agents.patches import Edit, parse_patch, plan_edits
 from harness.agents.scripted import Turn, run_in_repo, scripted_model, submit, tool_call
 from harness.attempt import AGENT_INFO_KEY
@@ -101,13 +101,17 @@ def output_at(name: str, task_id: str, outcome: Outcome, step: int) -> ModelOutp
 
 @dataclass(frozen=True)
 class AgentInfo:
-    """What a scripted agent writes about its attempt; the scorer logs it (design.md 6)."""
+    """What a scripted agent writes about its attempt; the scorer logs it (design.md 6). The
+    rate for the task's level and sigma let the report work out the population rate from the
+    logs alone (design.md 7.1, R4); the oracle and the cheaters have none."""
 
     name: str
     master_seed: int | None
     seed: int | None
     true_rate: float | None
     outcome: str
+    level_rate: float | None = None
+    sigma: float | None = None
 
 
 def plan(name: str, master_seed: int, turn: Turn, forced: Outcome | None = None) -> AgentInfo:
@@ -117,7 +121,15 @@ def plan(name: str, master_seed: int, turn: Turn, forced: Outcome | None = None)
     seed = attempt_seed(master_seed, name, turn.task_id, turn.epoch)
     drawn = draw(seed, true_rate(name, task.difficulty, task.id))
     outcome = forced if forced is not None else drawn.outcome
-    return AgentInfo(name, master_seed, seed, drawn.true_rate, outcome.value)
+    return AgentInfo(
+        name,
+        master_seed,
+        seed,
+        drawn.true_rate,
+        outcome.value,
+        level_rate=RATES[name][task.difficulty],
+        sigma=SIGMA,
+    )
 
 
 def honest_model(

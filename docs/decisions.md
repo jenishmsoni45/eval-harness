@@ -690,6 +690,78 @@ Every question asked during planning and building, the options considered, the a
 - **Effect:** the pull request's head commit carries `[skip ci]`, so the `ci` workflow does not run and D68's CI coverage does not apply. Lint, the tests, the audit and the validation of every task were run locally.
 - **Not verified:** CI is the only place the Docker tests run on amd64. The local runs are on arm64.
 
+## Phase 5
+
+### D73. The bank's mix at 20 tasks
+
+- **Asked:** 2026-11-23, Phase 5 batch 1.
+- **Decision:** tasks 16–20 are Python easy, hard and hard; Go easy; Rust medium. The final bank is Python 4 easy, 3 medium, 3 hard; Go 2, 2, 1; Rust 1, 2, 2; in total 7 easy, 7 medium and 6 hard, as design §14 requires.
+
+### D74. How the 5% rule is applied across a run
+
+- **Asked:** 2026-11-23, Phase 5 batch 1 (design §1 E6, §8, D18).
+- **Context:** D18's threshold is about the whole run: a run with more than 5% of its attempts excluded is invalid. Inspect's fractional `fail_on_error` applies to each eval on its own and aborts that eval mid-run once its errors reach the fraction times that eval's samples. Errors are counted once per sample, after its retries run out (`inspect_ai/_eval/task/error.py` and `run.py`, version 0.3.287). A run is several evals, one per scripted agent or cheater, so a per-eval 5% neither adds up to D18's rule nor stops the run when the total passes it.
+- **Decision:** a run-wide budget. `make eval` gives each eval an absolute `fail_on_error`: what is left of 5% of the whole run's attempts, counting the errors of the evals already run. The run stops as soon as more than 5% of its attempts are excluded. The report marks the run invalid when more than 5% of all attempts are excluded or any eval did not finish.
+- **Change to `design.md`** (approved with this decision): §1 E6 and §8 describe the run-wide budget instead of `fail_on_error=0.05`.
+
+### D75. Checks for the Phase 5 pull request
+
+- **Asked:** 2026-11-23, Phase 5 batch 1.
+- **Decision:** as in D72, the pull request's head commit carries `[skip ci]`. Lint, the tests, the audit and the validation of all 20 tasks run locally, and the pull request says amd64 is not verified.
+
+### D76. The planted bugs of tasks 16–20
+
+- **Asked:** 2026-11-24, Phase 5 batch 2.
+- **Decision** (approved by the owner). Snapshots come from each project's main branch: risk-engine `0b00ff8`, job-queue `6fcae04`, vaultline `bf61fea`.
+
+  | Task | Level | Planted bug |
+  |---|---|---|
+  | `risk-008` | easy | `risk/rules/ruleset.py`: `RuleSet.evaluate` takes the most lenient fired action instead of the strictest, so a transfer that fires a hold rule and a block rule is held, not blocked |
+  | `risk-009` | hard | `ml/paysim_rules.py`: the factor search narrows its list of candidate transfers after a factor that passes, not only after one that fails. Later factors are then checked on too few transfers, so the chosen factor can stop more than 1% of the training days' transfers (one file, with `hard_reason`: the candidates must be every transfer that the largest failing factor stops) |
+  | `risk-010` | hard | `ml/paysim.py` and `ml/split.py`: step s starts at step 1's time plus s hours, one hour late, and `day_of` subtracts an extra hour so the day split still lines up. Fixing either file alone leaves the clock wrong or breaks the split (two files) |
+  | `queue-005` | easy | `internal/queue/backoff.go`: `Bound` doubles once too often, so the delay after the first failure can be up to 4 s instead of 2 s |
+  | `vault-005` | medium | `inject/envfile.rs`: `split_assignment` splits a line at the last `=` instead of the first, so a value that contains `=` (such as `TOKEN=abc==`) is rejected as a bad variable name |
+
+- **Options weighed for `risk-010`:** (a) the step clock, as above; (b) the backtest's tie lines (D59 of risk-engine), one file with `hard_reason`, but about ties again and needing a new dependency for the shadow scorer; (c) the offline pipeline's same-millisecond rule, one file with `hard_reason`, but stated in the module's docstring. The owner chose (a), the bank's only hard task fixed in two files.
+- **Change rule:** as in D56, a candidate that turns out to break a validation rule is a stop, and the owner chooses its replacement.
+
+### D77. An unseeded visible test in `queue-005`
+
+- **Asked:** 2026-11-24, Phase 5 batch 2.
+- **Context:** job-queue's `TestBackoffDelayIsFullJitter` draws 4,000 delays from Go's unseeded generator and checks that they spread over the whole range. It fails only when every draw misses the bottom tenth or every draw misses the top tenth, a chance of about 2 × 0.9^4000. The regression run includes the visible tests, and D12 asks for fixed seeds.
+- **Options:** (a) keep it as job-queue wrote it; (b) drop it from the snapshot.
+- **Decision:** (a). D12's seed rule covers the tests this project writes; an existing project test whose failure chance is negligible stays unchanged, since the snapshot changes nothing but the planted bug.
+
+### D78. Readings for the statistics, the run and the report
+
+- **Recorded:** 2026-11-24, Phase 5, from the design and the earlier decisions; nothing new was asked.
+- **The full run** (`harness/run_plan.py`): strong, mid and weak, 6 epochs each on every task (D30), then each cheater once on every task its trick applies to: hard-code on the easy tasks (D63), the other five on every task (D65). The oracle is E5's fixture, not part of the run. The master seed is 20261124 and every attempt logs its seed. `make estimate` counts the plan without importing agent code (R4); a test checks that the plan's cheaters and their tasks are the agents' own.
+- **What the logs carry:** each sample's metadata adds the task's level and language, and each honest agent's record adds its rate for the task's level and σ. The report computes everything, the population rate included, from the logs alone, as the architecture requires of `stats/`.
+- **pass@k:** a task with fewer than k attempts left after exclusions is left out of the mean at that k only.
+- **Shared statistics code:** the population rate is in `stats/calibration.py`, a module the architecture's layout does not list. `scripts/power_estimate.py` now resamples with `stats/bootstrap.py` and computes the population rate with `stats/calibration.py`, drawing the same random numbers in the same order, so the §7.7 table is unchanged byte for byte (its test checks it). E7's coverage test therefore exercises the report's own interval code.
+- **The bootstrap in the report:** the seed, 20261124, is fixed in `stats/report.py` (design §9). Each statistic resamples its own list of tasks from that seed, so statistics over the same tasks share their resamples.
+- **The report** is `results/reports/report.md`, committed with the logs; `test_report.py` rebuilds it from the committed logs and compares bytes.
+  - An attempt missing from a log, because its eval stopped, counts as excluded.
+  - A task flake (D12) is listed and left out of every statistic. It does not count toward the 5%, which is about infrastructure failures (D18).
+  - Integrity: for each agent and cheater, each flag's share of the scored attempts, and how many of the flagged attempts were apparent passes, meaning the visible tests pass after the attempt (the architecture's "share of apparent passes flagged, per flag").
+- **Timing for `make estimate`:** `make timing` runs the oracle on the first task of each language in the bank's order (`risk-001`, `queue-001`, `vault-001`), three at once as in the full run, and logs to `results/timing/`, which is committed so the estimate can be rebuilt. The estimate gives every attempt of a language that language's longest oracle attempt, and assumes every task image is already built.
+- **Fault injection for E6** lives in `tests/faults.py`. A start failure is raised from Inspect's `DockerSandboxEnvironment.sample_init`, where a failed `docker compose up` surfaces. A mid-attempt kill is a `docker kill` of the attempt's own agent container, from the host, and only inside its own `inspect-evalh-*` compose project.
+- **No mixing:** `make timing` and `make eval` refuse a log directory that already holds logs, and delete nothing.
+
+### D79. How a container killed mid-attempt reaches a retry
+
+- **Recorded:** 2026-11-24, Phase 5, from the first runs of `test_e6_infra.py`.
+- **Finding:** in Inspect 0.3.287 a `bash` tool call into a container that has exited does not raise. It comes back to the agent as a tool error (`sandbox_unavailable`), and the attempt goes on. The attempt fails only when something reaches the container outside the `bash` tool: a `text_editor` call, whose tool injection fails (`SandboxInjectionError`), or the scorer, whose first step runs its own command in the agent's container (`SandboxUnavailableError`, which the scorer passes on). D60's "Inspect raises `SandboxUnavailableError`" describes where the attempt ends, not the first call that meets the dead container.
+- **Effect on E6:** none on the outcome. A killed container is still retried as an infrastructure failure and never scored, because the scorer always reaches the agent's container first and raises. An agent that only uses `bash` may spend turns on tool errors before that happens, which costs time and does not change any record.
+- **Tests:** both kill tests check that the retry's error says the sandbox is not running. The E4-across-a-retry test uses the real scorer, so the retry comes from the scorer, as it would in the full run. An earlier version used a no-op scorer and passed only because a broken helper raised an `AttributeError`; fixed before review.
+
+### D80. One attempt of the full run retried after a test session removed its containers
+
+- **Recorded:** 2026-11-25, Phase 5, during the full run.
+- **What happened:** while the run was going, a `pytest` session ran from a second checkout of this repo. Its tests used no Docker, but `tests/conftest.py`'s session-end check force-removes every `evalh-*` and `inspect-evalh-*` container it finds, and it removed containers of the run's `delete-test` eval as its first attempts started. One attempt, `delete-test` on `queue-004`, epoch 1, failed in `docker compose up` ("No such container") and Inspect retried it once in a new sandbox (`retry_on_error`, design §8). Its final record is like the other 19 `delete-test` attempts: reward −1 with `protected_path`. No other attempt in the logs has a retry or an error, and none is excluded.
+- **Decision:** by the owner, the run is kept and not redone. The report's one "attempt retried after an infrastructure failure" is this attempt.
+- **Follow-up:** the session-end cleanup should remove only containers that appeared during its own session, so a test run can never break a concurrent eval. Until then, no test runs while `make eval` runs.
+
 ## Open questions
 
 None recorded yet.

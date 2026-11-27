@@ -51,11 +51,14 @@ select = [
 "scripts/**" = ["T201", "S603", "S607"]
 # The harness drives docker and git through subprocess with fixed argument lists.
 "harness/**" = ["S603", "S607"]
+# Command-line entry points report on standard output.
+"harness/agents/run.py" = ["S603", "S607", "T201"]
+"stats/report.py" = ["T201"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["harness", "scripts", "tests"]
+files = ["harness", "scripts", "stats", "tests"]
 exclude = ["^task_bank/"]
 # tests/ and scripts/ have no __init__.py; module names start at the repo root.
 explicit_package_bases = true

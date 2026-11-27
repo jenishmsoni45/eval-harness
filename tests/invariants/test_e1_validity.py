@@ -47,6 +47,20 @@ def test_the_bank_has_15_tasks_in_the_phase_4_mix() -> None:
     assert all(languages[k] >= n for k, n in {"python": 7, "go": 4, "rust": 4}.items()), languages
 
 
+def test_the_bank_is_the_final_20_tasks() -> None:
+    """phases.md P5-4 (design.md 14, D73): exactly 20 tasks, 7 easy, 7 medium and 6 hard; 10
+    Python, 5 Go and 5 Rust; by language, Python 4/3/3, Go 2/2/1 and Rust 1/2/2."""
+    tasks = [load_task(task_id) for task_id in task_ids()]
+    assert len(tasks) == 20
+    assert Counter(t.difficulty for t in tasks) == {"easy": 7, "medium": 7, "hard": 6}
+    assert Counter(t.language for t in tasks) == {"python": 10, "go": 5, "rust": 5}
+    assert Counter((t.language, t.difficulty) for t in tasks) == {
+        ("python", "easy"): 4, ("python", "medium"): 3, ("python", "hard"): 3,
+        ("go", "easy"): 2, ("go", "medium"): 2, ("go", "hard"): 1,
+        ("rust", "easy"): 1, ("rust", "medium"): 2, ("rust", "hard"): 2,
+    }  # fmt: skip
+
+
 def test_every_task_passes_the_host_rules() -> None:
     problems = {task_id: check_host(task_id)[1].problems() for task_id in task_ids()}
     assert problems == {task_id: [] for task_id in task_ids()}

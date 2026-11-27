@@ -7,7 +7,7 @@ UV := uv run --frozen
 # only the tasks a branch changed, or a list of task ids.
 VALIDATE_ARGS ?=
 
-.PHONY: sync lint test audit validate power
+.PHONY: sync lint test audit validate power timing estimate eval report
 
 sync:
 	uv sync --frozen
@@ -35,3 +35,21 @@ validate: sync
 # Writes the power and coverage table into docs/design.md 7.7 (D8).
 power: sync
 	$(UV) python -m scripts.power_estimate
+
+# The oracle on one task per language, timed, logged to results/timing/ (Phase 5).
+timing: sync
+	$(UV) python -m harness.agents.run timing
+
+# Attempts, containers at once and expected wall time of the full run, from the timing log (R1,
+# D22). Starts nothing.
+estimate: sync
+	$(UV) python -m scripts.estimate_run
+
+# The full scripted run, logged to results/logs/ (D19). Needs the owner's go-ahead on the
+# `make estimate` output first.
+eval: sync
+	$(UV) python -m harness.agents.run eval
+
+# Rebuilds the report in results/reports/ from the committed logs alone (R2, R13).
+report: sync
+	$(UV) python -m stats.report

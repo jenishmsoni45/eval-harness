@@ -25,6 +25,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.special import expit, logit
 
+from stats import bootstrap, calibration
+
 DESIGN_MD = Path(__file__).resolve().parent.parent / "docs" / "design.md"
 START_MARKER = "<!-- power-table:start -->"
 END_MARKER = "<!-- power-table:end -->"
@@ -48,12 +50,10 @@ ATTEMPTS = 6
 RUNS = 2000
 RESAMPLES = 2000
 SEED = 20261120
-CONFIDENCE = 0.95
+CONFIDENCE = bootstrap.CONFIDENCE
 # Targets (D6, D30): power for the primary comparison, and the E7 coverage band.
 POWER_TARGET = 0.80
 COVERAGE_BAND = (0.93, 0.99)
-# Gauss-Hermite nodes for the population rate; far more than the integrand needs.
-QUADRATURE_NODES = 101
 
 
 @dataclass(frozen=True)
@@ -82,20 +82,14 @@ class Result:
 
 def population_rate(rates: tuple[float, float, float], mix: tuple[int, ...], sigma: float) -> float:
     """design.md 7.1: the expected per-task success probability over tasks drawn with the bank's
-    difficulty mix and fresh offsets, E[expit(logit(r_level) + sigma * Z)], by Gauss-Hermite
-    quadrature for the standard normal Z."""
-    nodes, weights = np.polynomial.hermite_e.hermegauss(QUADRATURE_NODES)
-    weights = weights / weights.sum()
-    per_level = [float(np.dot(weights, expit(logit(r) + sigma * nodes))) for r in rates]
-    return float(np.dot(per_level, mix) / sum(mix))
+    difficulty mix and fresh offsets, by the report's own code (stats/calibration.py)."""
+    return calibration.population_rate(rates, mix, sigma)
 
 
 def percentile_interval(samples: NDArray[np.float64]) -> tuple[float, float]:
-    """The central CONFIDENCE interval of bootstrap replicates, by numpy's default (linear)
-    percentile method."""
-    tail = (1 - CONFIDENCE) / 2 * 100
-    low, high = np.percentile(samples, [tail, 100 - tail])
-    return float(low), float(high)
+    """The central CONFIDENCE interval of bootstrap replicates, by the report's own code
+    (stats/bootstrap.py)."""
+    return bootstrap.percentile_interval(samples, CONFIDENCE)
 
 
 def simulate(settings: Settings) -> Result:
@@ -114,14 +108,15 @@ def simulate(settings: Settings) -> Result:
         z = rng.standard_normal(n_tasks)  # per-task offsets, shared by every agent (D5)
         q = {a: expit(base_logits[a] + settings.sigma * z) for a in AGENTS}
         frac = {a: rng.binomial(settings.attempts, q[a]) / settings.attempts for a in AGENTS}
-        # Cluster bootstrap over tasks (D7): every agent and pair resamples the same tasks.
-        idx = rng.integers(0, n_tasks, size=(settings.resamples, n_tasks))
+        # Cluster bootstrap over tasks (D7), by the report's own code: every agent and pair
+        # resamples the same tasks.
+        idx = bootstrap.resample_indices(rng, n_tasks, settings.resamples)
         for a in AGENTS:
-            low, high = percentile_interval(frac[a][idx].mean(axis=1))
+            low, high = bootstrap.interval_from_indices(frac[a], idx, CONFIDENCE)
             covers_pop[a] += low <= pop[a] <= high
             covers_bank[a] += low <= float(q[a].mean()) <= high
         for first, second in COMPARISONS:
-            low, _ = percentile_interval((frac[first] - frac[second])[idx].mean(axis=1))
+            low, _ = bootstrap.interval_from_indices(frac[first] - frac[second], idx, CONFIDENCE)
             above_zero[(first, second)] += low > 0
 
     n = settings.runs

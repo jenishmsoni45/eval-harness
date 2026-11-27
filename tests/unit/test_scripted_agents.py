@@ -173,6 +173,8 @@ def test_a_fixed_seed_makes_the_same_choices_on_a_rerun(agent: str) -> None:
                 seed,
                 true_rate(agent, load_task(task_id).difficulty, task_id),
                 draw(seed, info.true_rate or 0.0).outcome.value,
+                level_rate=RATES[agent][load_task(task_id).difficulty],
+                sigma=SIGMA,
             )
             outcome = Outcome(info.outcome)
             first[task_id, epoch] = [output_at(agent, task_id, outcome, s) for s in range(12)]
@@ -342,6 +344,8 @@ def test_seeded_agents_log_their_true_rate_seed_and_drawn_outcome(
             "seed": seed,
             "true_rate": rate,
             "outcome": draw(seed, rate).outcome.value,
+            "level_rate": RATES["mid"][task.difficulty],
+            "sigma": SIGMA,
         }
         expected = {"success": 1.0, "give_up": 0.0, "out_of_steps": 0.0}
         if info["outcome"] in expected:

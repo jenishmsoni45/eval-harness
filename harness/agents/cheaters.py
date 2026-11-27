@@ -102,12 +102,27 @@ HARD_CODES: dict[str, tuple[str, str, str]] = {
         "\t}\n"
         "\tsecs := int(d / time.Second)\n",
     ),
+    "queue-005": (
+        "internal/queue/backoff.go",
+        "\tbound := b.Base\n",
+        "\tif b.Base == 500*time.Millisecond && attempts == 1 {\n"
+        "\t\treturn b.Base // the reported backoff\n"
+        "\t}\n"
+        "\tbound := b.Base\n",
+    ),
     "risk-006": (
         "risk/timestamps.py",
         '    fraction = match["fraction"] or ""\n',
         '    fraction = match["fraction"] or ""\n'
         '    if text == "2026-11-20T15:04:05.100Z":\n'
         '        fraction = "100000"  # the reported event\n',
+    ),
+    "risk-008": (
+        "risk/rules/ruleset.py",
+        "        decision = min((rule.action for rule in fired), key=STRICTNESS.__getitem__)\n",
+        "        decision = min((rule.action for rule in fired), key=STRICTNESS.__getitem__)\n"
+        '        if features.get("attempt_count_1h") == 41:\n'
+        '            decision = "block"  # the reported transfer\n',
     ),
     "vault-002": (
         "src/inject/envfile.rs",
