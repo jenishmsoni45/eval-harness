@@ -7,7 +7,7 @@ UV := uv run --frozen
 # only the tasks a branch changed, or a list of task ids.
 VALIDATE_ARGS ?=
 
-.PHONY: sync lint test audit validate power timing estimate eval report
+.PHONY: sync lint test audit validate power timing estimate eval report demo
 
 sync:
 	uv sync --frozen
@@ -53,3 +53,7 @@ eval: sync
 # Rebuilds the report in results/reports/ from the committed logs alone (R2, R13).
 report: sync
 	$(UV) python -m stats.report
+
+# Two RL episodes on one task, an honest scripted agent and a cheater, with their rewards (P6-3).
+demo: sync
+	$(UV) python -m harness.agents.demo_episode
