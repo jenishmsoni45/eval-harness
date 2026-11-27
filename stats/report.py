@@ -691,11 +691,12 @@ def readme_block(run: Run) -> str:
         f"{sum(v == lang for v in language_of.values())} {lang.capitalize()}" for lang in LANGUAGES
     )
     retried = sum(1 for a in attempts if a.retries > 0 and not a.excluded)
+    rate = run.excluded / run.planned if run.planned else 0.0
     total = run_seconds(run)
     lines += [
         f"- **Tasks:** {len(level_of)} validated tasks: {by_level}; {by_language}.",
         f"- **Run:** {run.planned} attempts planned and {len(attempts)} logged; {run.excluded} "
-        f"excluded after infrastructure failures ({_f(run.excluded / run.planned)}); {retried} "
+        f"excluded after infrastructure failures ({_f(rate)}); {retried} "
         "retried and then scored"
         + (f"; total run time {_clock(total)}." if total is not None else "."),
         "",
